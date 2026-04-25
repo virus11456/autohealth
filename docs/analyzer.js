@@ -2,6 +2,53 @@
 // rolling-baseline anomaly detection, and Chinese narrative insights.
 import { columnValues } from "./aggregator.js";
 
+// Phase 3 composite scores. Mirror healthkit/analyzer.py:
+// - Readiness: HRV (+), resting_hr (-), sleep_score (+), respiratory (penalty for either deviation)
+// - Env Stress: daylight (-), spo2 (-), respiratory (+), hrv (-)
+// Each component contributes a directional z-score; average mapped to 0-100
+// via clip(50 + 20 * z_avg, 0, 100). Need >= 2 / 4 components per day.
+
+const READINESS_COMPONENTS = [
+  ["hrv_zscore30",          +1],
+  ["resting_hr_zscore30",   -1],
+  ["sleep_score_zscore30",  +1],
+  ["respiratory_zscore30",  "abs"],
+];
+
+const ENV_STRESS_COMPONENTS = [
+  ["daylight_zscore30",     -1],
+  ["spo2_zscore30",         -1],
+  ["respiratory_zscore30",  +1],
+  ["hrv_zscore30",          -1],
+];
+
+function compositeScore(frame, components, slope = 20, midpoint = 50) {
+  const out = new Array(frame.rows.length).fill(NaN);
+  for (let i = 0; i < frame.rows.length; i++) {
+    const row = frame.rows[i];
+    let n = 0, sum = 0;
+    for (const [col, sign] of components) {
+      const z = row[col];
+      if (!Number.isFinite(z)) continue;
+      const contribution = sign === "abs" ? -Math.abs(z) : z * sign;
+      sum += contribution;
+      n++;
+    }
+    if (n < 2) continue;
+    const avg = sum / n;
+    out[i] = Math.max(0, Math.min(100, midpoint + slope * avg));
+  }
+  return out;
+}
+
+export function computeReadiness(frame) {
+  return compositeScore(frame, READINESS_COMPONENTS);
+}
+
+export function computeEnvStress(frame) {
+  return compositeScore(frame, ENV_STRESS_COMPONENTS);
+}
+
 export const METRIC_LABELS = {
   steps: "步數",
   active_energy: "活動消耗",
@@ -25,6 +72,13 @@ export const METRIC_LABELS = {
   sleep_awake_minutes: "夜間清醒分鐘",
   sleep_efficiency: "睡眠效率",
   bedtime_offset_min: "就寢時點 (18:00 後分鐘)",
+  sleep_score: "睡眠分數",
+  hr_min: "心率最低",
+  hr_max: "心率最高",
+  hr_std: "心率波動 (std)",
+  hr_samples: "心率樣本數",
+  readiness: "恢復分數",
+  env_stress: "環境壓力分數",
 };
 
 export const DRIVERS_DEFAULT = ["sleep_hours", "sleep_efficiency", "steps", "active_energy", "bedtime_offset_min"];
@@ -100,8 +154,16 @@ export function spearman(x, y) {
 
 // ---- analysis primitives -------------------------------------------------
 
+// Derived rolling baseline / z-score columns are inputs to Phase 3 scores;
+// excluded from generic correlation, lag, and anomaly analyses to avoid
+// double-counting against their own underlying signal.
+function isDerivedColumn(c) {
+  return c.endsWith("_baseline30") || c.endsWith("_zscore30");
+}
+
 export function analyzableColumns(frame, minObs = 14) {
   return frame.columns.filter((c) => {
+    if (isDerivedColumn(c)) return false;
     const vals = columnValues(frame, c);
     let n = 0;
     for (const v of vals) if (Number.isFinite(v)) n++;
@@ -157,6 +219,7 @@ export function laggedCorrelations(frame, drivers, responses, lags, minObs = 14)
 export function detectAnomalies(frame, sigma = 2.0, baseline = 28) {
   const anomalies = [];
   for (const col of frame.columns) {
+    if (isDerivedColumn(col)) continue;
     const vals = columnValues(frame, col);
     // rolling mean/std using only finite values within the trailing window
     for (let i = baseline; i < vals.length; i++) {

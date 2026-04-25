@@ -6,6 +6,8 @@ from .analyzer import (
     detect_anomalies,
     rolling_view,
     generate_insights,
+    compute_readiness,
+    compute_env_stress,
 )
 
 __all__ = [
@@ -17,4 +19,6 @@ __all__ = [
     "detect_anomalies",
     "rolling_view",
     "generate_insights",
+    "compute_readiness",
+    "compute_env_stress",
 ]

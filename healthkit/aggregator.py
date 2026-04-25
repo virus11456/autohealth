@@ -7,6 +7,13 @@ import pandas as pd
 from .parser import SUPPORTED_TYPES, metric_index
 
 
+# Metrics that get a 30-day rolling baseline + z-score column. Picked because
+# Phase 3 Readiness/Environment scores read these baselines; adding more is cheap.
+BASELINE_METRICS = (
+    "resting_hr", "hrv", "respiratory", "sleep_score", "spo2", "daylight",
+)
+
+
 # Sleep "day" rule: a session that ends after noon belongs to that calendar day;
 # one ending at e.g. 06:00 belongs to the same calendar day. We attribute each
 # session to the date of its END timestamp, which matches how Apple Health UI
@@ -39,6 +46,21 @@ def _sleep_daily(sleep: pd.DataFrame) -> pd.DataFrame:
         "sleep_end": grouped.apply(lambda g: g["end"].max()),
     })
     daily["sleep_hours"] = daily["sleep_minutes"] / 60.0
+
+    # 0-100 sleep score: 50% duration vs 7.5h target + 25% deep ratio vs 20%
+    # + 25% REM ratio vs 25%. Mirrors scripts/parse_health.py so the standalone
+    # CLI and the library produce comparable values.
+    deep_h = daily["sleep_deep_minutes"] / 60.0
+    rem_h = daily["sleep_rem_minutes"] / 60.0
+    asleep_h = daily["sleep_hours"]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        dur_score = np.minimum(asleep_h / 7.5, 1.0) * 50
+        deep_ratio = np.where(asleep_h > 0, deep_h / asleep_h, 0)
+        rem_ratio = np.where(asleep_h > 0, rem_h / asleep_h, 0)
+        deep_score = np.minimum(deep_ratio / 0.20, 1.0) * 25
+        rem_score = np.minimum(rem_ratio / 0.25, 1.0) * 25
+    score = pd.Series(dur_score + deep_score + rem_score, index=daily.index)
+    daily["sleep_score"] = score.where(asleep_h >= 1.0).round(1)
 
     # bedtime as minutes-after-18:00 so 23:30 -> 330, 01:00 -> 420
     def _bedtime_offset(ts: pd.Timestamp) -> float:
@@ -74,6 +96,38 @@ def _quantity_daily(key: str, df: pd.DataFrame) -> pd.Series:
     return grouped.mean()
 
 
+def _hr_derived_daily(hr_df: pd.DataFrame) -> pd.DataFrame:
+    """Per-day min / max / std / sample-count for raw heart-rate records.
+
+    Mean is already computed via the standard 'hr' rollup; these companions let
+    downstream analyses look at HR spread (training intensity proxy) without
+    keeping every raw sample around.
+    """
+    s = hr_df.copy()
+    s["date"] = s["start"].dt.normalize()
+    grouped = s.groupby("date")["value"]
+    out = pd.DataFrame({
+        "hr_min": grouped.min(),
+        "hr_max": grouped.max(),
+        "hr_std": grouped.std(ddof=1),
+        "hr_samples": grouped.count().astype("int64"),
+    })
+    return out
+
+
+def _attach_baselines(daily: pd.DataFrame, cols: tuple[str, ...] = BASELINE_METRICS,
+                     window: int = 30, min_periods: int = 7) -> None:
+    """Add `{col}_baseline30` and `{col}_zscore30` for each metric in cols."""
+    for col in cols:
+        if col not in daily.columns:
+            continue
+        s = daily[col]
+        mean = s.rolling(window, min_periods=min_periods).mean()
+        std = s.rolling(window, min_periods=min_periods).std(ddof=1)
+        daily[f"{col}_baseline30"] = mean
+        daily[f"{col}_zscore30"] = (s - mean) / std.replace(0, np.nan)
+
+
 def build_daily_frame(per_metric: dict[str, pd.DataFrame]) -> pd.DataFrame:
     """Combine all metrics into one DataFrame indexed by date."""
     columns: dict[str, pd.Series] = {}
@@ -98,11 +152,21 @@ def build_daily_frame(per_metric: dict[str, pd.DataFrame]) -> pd.DataFrame:
     daily.index.name = "date"
     daily = daily.sort_index()
 
+    # HR derivations (min/max/std/samples) from raw records
+    hr_df = per_metric.get("hr")
+    if hr_df is not None and not hr_df.empty:
+        hr_extra = _hr_derived_daily(hr_df)
+        hr_extra.index = pd.to_datetime(hr_extra.index).normalize()
+        for col in hr_extra.columns:
+            daily[col] = hr_extra[col]
+
     # derived: nighttime SpO2 minimum approximated via daily min if records overlap sleep
     spo2_df = per_metric.get("spo2")
     sleep_df = per_metric.get("sleep")
     if spo2_df is not None and sleep_df is not None and not spo2_df.empty and not sleep_df.empty:
         daily["spo2_sleep_min"] = _spo2_during_sleep(spo2_df, sleep_df)
+
+    _attach_baselines(daily)
 
     return daily
 

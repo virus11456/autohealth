@@ -9,6 +9,8 @@ sys.path.insert(0, str(ROOT))
 
 from healthkit import (  # noqa: E402
     build_daily_frame,
+    compute_env_stress,
+    compute_readiness,
     correlation_matrix,
     detect_anomalies,
     generate_insights,
@@ -37,7 +39,19 @@ def main() -> int:
     assert daily["sleep_hours"].notna().sum() > 50
 
     smoothed = rolling_view(daily, window=7)
-    assert smoothed.shape == daily.select_dtypes("number").shape
+    # rolling_view operates on _numeric_view which excludes the rolling-baseline
+    # and z-score columns (Phase 2 derived inputs to Phase 3 scores).
+    derived_cols = [c for c in daily.columns
+                    if c.endswith("_baseline30") or c.endswith("_zscore30")]
+    assert smoothed.shape[0] == daily.shape[0]
+    assert smoothed.shape[1] == daily.select_dtypes("number").shape[1] - len(derived_cols)
+
+    readiness = compute_readiness(daily)
+    env_stress = compute_env_stress(daily)
+    print(f"\nreadiness: {readiness.notna().sum()} days, latest={readiness.dropna().iloc[-1]:.1f}")
+    print(f"env_stress: {env_stress.notna().sum()} days, latest={env_stress.dropna().iloc[-1]:.1f}")
+    assert readiness.notna().sum() > 50
+    assert env_stress.notna().sum() > 50
 
     corr = correlation_matrix(daily)
     print(f"\ncorrelation matrix: {corr.shape}")

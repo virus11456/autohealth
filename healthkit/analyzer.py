@@ -8,6 +8,62 @@ import pandas as pd
 from scipy import stats
 
 
+# Phase 3 composite scores. Each takes the z-score columns produced by
+# aggregator._attach_baselines() and combines them into a 0-100 daily score.
+# Convention: a metric's directional contribution is +z if "higher is better"
+# for that score, -z if "lower is better", -|z| if "closer to baseline is
+# better". Components average; missing components are skipped (need >= 2/4).
+
+# (zscore_column, sign) — sign = +1 / -1 / "abs" (penalize either direction)
+READINESS_COMPONENTS = (
+    ("hrv_zscore30",          +1),     # higher HRV = better recovery
+    ("resting_hr_zscore30",   -1),     # lower RHR = better recovery
+    ("sleep_score_zscore30",  +1),     # higher sleep score = better
+    ("respiratory_zscore30",  "abs"),  # closer to personal baseline = better
+)
+
+ENV_STRESS_COMPONENTS = (
+    ("daylight_zscore30",      -1),    # less daylight = more env stress
+    ("spo2_zscore30",          -1),    # lower SpO2 = more stress
+    ("respiratory_zscore30",   +1),    # higher respiratory = stress signal
+    ("hrv_zscore30",           -1),    # lower HRV = more stress
+)
+
+
+def _composite_score(daily, components, slope: float = 20.0, midpoint: float = 50.0) -> "pd.Series":
+    """Average directional z-scores → 0-100. ±2σ ≈ 90/10, ±2.5σ saturates."""
+    import numpy as np
+    import pandas as pd
+
+    parts = []
+    for col, sign in components:
+        if col not in daily.columns:
+            continue
+        s = daily[col]
+        if sign == "abs":
+            parts.append(-s.abs())
+        else:
+            parts.append(s * sign)
+    if not parts:
+        return pd.Series(dtype=float, index=daily.index)
+    stacked = pd.concat(parts, axis=1)
+    # require >= 2 non-NaN components per day
+    good = stacked.notna().sum(axis=1) >= 2
+    z_avg = stacked.mean(axis=1, skipna=True)
+    score = (midpoint + slope * z_avg).clip(0, 100)
+    return score.where(good).rename(None)
+
+
+def compute_readiness(daily: "pd.DataFrame") -> "pd.Series":
+    """0-100 daily Readiness Score (HRV, RHR, sleep_score, respiratory)."""
+    return _composite_score(daily, READINESS_COMPONENTS)
+
+
+def compute_env_stress(daily: "pd.DataFrame") -> "pd.Series":
+    """0-100 daily Environment Stress Score (daylight, SpO2, respiratory, HRV)."""
+    return _composite_score(daily, ENV_STRESS_COMPONENTS)
+
+
 METRIC_LABELS_ZH = {
     "steps": "步數",
     "active_energy": "活動消耗",
@@ -28,12 +84,26 @@ METRIC_LABELS_ZH = {
     "sleep_awake_minutes": "夜間清醒分鐘",
     "sleep_efficiency": "睡眠效率",
     "bedtime_offset_min": "就寢時點 (18:00 後分鐘)",
+    "walking_asymmetry": "步行不對稱率",
+    "double_support": "雙腳支撐時間",
+    "daylight": "日照時間",
+    "sleep_score": "睡眠分數",
+    "hr_min": "心率最低",
+    "hr_max": "心率最高",
+    "hr_std": "心率波動 (std)",
+    "hr_samples": "心率樣本數",
+    "readiness": "恢復分數",
+    "env_stress": "環境壓力分數",
 }
 
 
 def _numeric_view(daily: pd.DataFrame) -> pd.DataFrame:
     drop_cols = [c for c in ("sleep_start", "sleep_end") if c in daily.columns]
-    return daily.drop(columns=drop_cols, errors="ignore").select_dtypes(include="number")
+    # Exclude derived rolling-baseline / z-score columns from correlation, anomaly,
+    # and lag analyses — they're inputs to Phase 3 Readiness/EnvStress, not
+    # first-class signals on their own.
+    derived = [c for c in daily.columns if c.endswith("_baseline30") or c.endswith("_zscore30")]
+    return daily.drop(columns=drop_cols + derived, errors="ignore").select_dtypes(include="number")
 
 
 def rolling_view(daily: pd.DataFrame, window: int = 7) -> pd.DataFrame:
