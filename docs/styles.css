@@ -54,6 +54,26 @@ main { padding: 24px; max-width: 1400px; margin: 0 auto; }
 .progress > div { height: 100%; background: var(--accent); width: 0; transition: width .15s; }
 .progress-text { font-size: 0.85rem; color: var(--muted); margin-top: 8px; }
 
+.score-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 600px) { .score-row { grid-template-columns: 1fr; } }
+.score-card {
+  background: var(--panel-2); border-left: 6px solid var(--info);
+  border-radius: 8px; padding: 14px 16px;
+}
+.score-card .label { color: var(--muted); font-size: 0.85rem; }
+.score-card .value { font-size: 2.2rem; font-weight: 600; margin-top: 4px; line-height: 1.1; }
+.score-card .value .scale { font-size: 0.5em; color: var(--muted); font-weight: 400; }
+.score-card .hint { color: var(--muted); font-size: 0.8rem; margin-top: 6px; }
+.score-card.good { border-left-color: var(--good); }
+.score-card.good .value { color: var(--good); }
+.score-card.fair { border-left-color: var(--info); }
+.score-card.fair .value { color: var(--info); }
+.score-card.low  { border-left-color: var(--warn); }
+.score-card.low  .value { color: var(--warn); }
+.score-card.alert { border-left-color: var(--bad); }
+.score-card.alert .value { color: var(--bad); }
+.score-card.empty .value { color: var(--muted); }
+
 .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
 .kpi { background: var(--panel-2); border-radius: 8px; padding: 12px 14px; }
 .kpi .label { color: var(--muted); font-size: 0.78rem; }

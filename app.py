@@ -16,6 +16,8 @@ import streamlit as st
 
 from healthkit import (
     build_daily_frame,
+    compute_env_stress,
+    compute_readiness,
     correlation_matrix,
     detect_anomalies,
     generate_insights,
@@ -120,6 +122,62 @@ if df.empty:
     st.info("選定區間沒有資料。")
     st.stop()
 
+# Phase 3 composite scores — computed against the full daily frame so the
+# 30-day baselines that feed the z-score columns aren't truncated by the
+# date filter, then sliced to the visible window.
+readiness_full = compute_readiness(daily)
+env_stress_full = compute_env_stress(daily)
+df["readiness"] = readiness_full.reindex(df.index)
+df["env_stress"] = env_stress_full.reindex(df.index)
+
+# ------------------------- Phase 3 score banner -------------------------
+def _score_band(score: float) -> tuple[str, str]:
+    """Map 0-100 to (label, color)."""
+    if not pd.notna(score):
+        return "—", "#6b7280"
+    if score >= 70:
+        return "良好", "#10b981"
+    if score >= 50:
+        return "尚可", "#3b82f6"
+    if score >= 30:
+        return "偏低", "#f59e0b"
+    return "警戒", "#ef4444"
+
+
+def _latest_score(col: str) -> float:
+    if col not in df.columns:
+        return float("nan")
+    s = df[col].dropna()
+    return float(s.iloc[-1]) if not s.empty else float("nan")
+
+
+readiness_today = _latest_score("readiness")
+env_today = _latest_score("env_stress")
+score_cols = st.columns([1, 1])
+for col_ui, (col_name, label, hint) in zip(
+    score_cols,
+    (
+        ("readiness", "🌿 恢復分數", "HRV ↑ + 靜息心率 ↓ + 睡眠分數 + 呼吸頻率穩定的綜合 0-100 分"),
+        ("env_stress", "🌫 環境壓力", "日照不足 + 血氧偏低 + 呼吸頻率偏高 + HRV 偏低（高 = 警訊）"),
+    ),
+):
+    val = _latest_score(col_name)
+    band_label, band_color = _score_band(val if col_name == "readiness" else (100 - val) if pd.notna(val) else val)
+    val_text = f"{val:.0f}" if pd.notna(val) else "—"
+    with col_ui:
+        st.markdown(
+            f"""
+            <div style="border-left:6px solid {band_color}; padding:12px 16px;
+                        background:rgba(127,127,127,0.06); border-radius:6px;">
+              <div style="font-size:0.85em; opacity:0.7;">{label}</div>
+              <div style="font-size:2em; font-weight:600; color:{band_color};">{val_text}
+                <span style="font-size:0.5em; opacity:0.7;"> / 100 · {band_label}</span></div>
+              <div style="font-size:0.8em; opacity:0.7;">{hint}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
 # ------------------------- KPI strip -------------------------
 def _kpi(label: str, col: str, fmt: str = "{:.1f}", suffix: str = ""):
     if col not in df.columns or df[col].dropna().empty:
@@ -137,12 +195,12 @@ def _kpi(label: str, col: str, fmt: str = "{:.1f}", suffix: str = ""):
 
 
 k1, k2, k3, k4, k5, k6 = st.columns(6)
-with k1: _kpi("睡眠時數 (近 7 天均)", "sleep_hours", "{:.1f}", " h")
+with k1: _kpi("睡眠分數 (近 7 天均)", "sleep_score", "{:.0f}", " /100")
 with k2: _kpi("靜息心率", "resting_hr", "{:.0f}", " bpm")
 with k3: _kpi("HRV", "hrv", "{:.0f}", " ms")
 with k4: _kpi("血氧 (日均)", "spo2", "{:.1f}", " %")
 with k5: _kpi("步數", "steps", "{:.0f}")
-with k6: _kpi("活動消耗", "active_energy", "{:.0f}", " kcal")
+with k6: _kpi("日照", "daylight", "{:.0f}", " 分")
 
 # ------------------------- tabs -------------------------
 tab_insight, tab_trend, tab_corr, tab_lag, tab_anom, tab_data = st.tabs(
@@ -171,8 +229,13 @@ with tab_insight:
 
 # ---- trends ----
 with tab_trend:
-    metric_options = [c for c in df.columns if c not in ("sleep_start", "sleep_end") and df[c].notna().sum() > 0]
-    default = [m for m in ("sleep_hours", "resting_hr", "hrv", "spo2", "steps") if m in metric_options][:3]
+    metric_options = [
+        c for c in df.columns
+        if c not in ("sleep_start", "sleep_end")
+        and not c.endswith("_baseline30") and not c.endswith("_zscore30")
+        and df[c].notna().sum() > 0
+    ]
+    default = [m for m in ("readiness", "hrv", "resting_hr", "sleep_score") if m in metric_options][:3]
     chosen = st.multiselect(
         "選擇要對照的指標",
         options=metric_options,
@@ -223,7 +286,12 @@ with tab_corr:
 # ---- lagged correlations ----
 with tab_lag:
     st.subheader("時間延遲相關（找出『今天的行為 → 明天的身體反應』）")
-    cols = [c for c in df.columns if df[c].notna().sum() >= 14 and c not in ("sleep_start", "sleep_end")]
+    cols = [
+        c for c in df.columns
+        if df[c].notna().sum() >= 14
+        and c not in ("sleep_start", "sleep_end")
+        and not c.endswith("_baseline30") and not c.endswith("_zscore30")
+    ]
     c1, c2 = st.columns(2)
     with c1:
         drivers = st.multiselect(
@@ -285,7 +353,14 @@ with tab_anom:
 # ---- raw data ----
 with tab_data:
     st.subheader("每日彙整資料")
+    include_derived = st.checkbox(
+        "顯示衍生欄位（30 天基線 / Z 分數）", value=False,
+        help="這些欄位是 Phase 3 恢復分數的輸入，平常顯示會讓表變很寬。",
+    )
     show = df.copy()
+    if not include_derived:
+        show = show[[c for c in show.columns
+                     if not c.endswith("_baseline30") and not c.endswith("_zscore30")]]
     show.columns = [_label(c) for c in show.columns]
     st.dataframe(show, use_container_width=True, height=520)
     st.download_button(

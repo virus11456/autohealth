@@ -4,6 +4,7 @@ import {
   spearman, correlationMatrix, laggedCorrelations, detectAnomalies,
   generateInsights, analyzableColumns, labelOf, METRIC_LABELS,
   DRIVERS_DEFAULT, RESPONSES_DEFAULT,
+  computeReadiness, computeEnvStress,
 } from "./analyzer.js";
 
 const state = {
@@ -50,6 +51,15 @@ async function loadFile(file) {
       textEl.textContent = "解析完成，但沒有可分析的資料。";
       return;
     }
+    // Phase 3 composite scores — injected as columns so they flow through KPI
+    // strip, trend chart, daily table, and CSV download for free.
+    const readiness = computeReadiness(state.frame);
+    const envStress = computeEnvStress(state.frame);
+    for (let i = 0; i < state.frame.rows.length; i++) {
+      state.frame.rows[i].readiness = readiness[i];
+      state.frame.rows[i].env_stress = envStress[i];
+    }
+    state.frame.columns.push("readiness", "env_stress");
     progressEl.style.width = "100%";
     textEl.textContent = `完成：${state.frame.rows.length} 天，${state.frame.columns.length} 個指標`;
     initDashboard();
@@ -126,6 +136,7 @@ function setupTabs() {
 
 function renderAll() {
   if (!state.filtered) return;
+  renderScoreBanner();
   renderKPIs();
   renderInsights();
   renderTrendChart();
@@ -133,6 +144,53 @@ function renderAll() {
   renderLagTable();
   renderAnomalies();
   renderDailyTable();
+}
+
+// ---------------- Phase 3 score banner -----------------------------------
+
+function scoreBand(score, inverse = false) {
+  // For env_stress (inverse=true): high score = bad, so flip the band.
+  if (!Number.isFinite(score)) return { cls: "empty", label: "—" };
+  const v = inverse ? 100 - score : score;
+  if (v >= 70) return { cls: "good",  label: "良好" };
+  if (v >= 50) return { cls: "fair",  label: "尚可" };
+  if (v >= 30) return { cls: "low",   label: "偏低" };
+  return         { cls: "alert", label: "警戒" };
+}
+
+function latestFinite(col) {
+  const vals = columnValues(state.filtered, col);
+  for (let i = vals.length - 1; i >= 0; i--) if (Number.isFinite(vals[i])) return vals[i];
+  return NaN;
+}
+
+function renderScoreBanner() {
+  const wrap = $("#scoreBanner");
+  wrap.innerHTML = "";
+  const items = [
+    {
+      key: "readiness", label: "🌿 恢復分數",
+      hint: "HRV ↑ + 靜息心率 ↓ + 睡眠分數 + 呼吸頻率穩定的綜合 0-100 分",
+      inverse: false,
+    },
+    {
+      key: "env_stress", label: "🌫 環境壓力",
+      hint: "日照不足 + 血氧偏低 + 呼吸頻率偏高 + HRV 偏低（高 = 警訊）",
+      inverse: true,
+    },
+  ];
+  for (const it of items) {
+    const v = latestFinite(it.key);
+    const band = scoreBand(v, it.inverse);
+    const card = document.createElement("div");
+    card.className = `score-card ${band.cls}`;
+    const valText = Number.isFinite(v) ? `${v.toFixed(0)}` : "—";
+    card.innerHTML = `
+      <div class="label">${it.label}</div>
+      <div class="value">${valText}<span class="scale"> / 100 · ${band.label}</span></div>
+      <div class="hint">${it.hint}</div>`;
+    wrap.appendChild(card);
+  }
 }
 
 // ---------------- KPI strip ----------------------------------------------
@@ -162,12 +220,12 @@ function renderKPIs() {
   const wrap = $("#kpis");
   wrap.innerHTML = "";
   const items = [
-    ["睡眠時數",  "sleep_hours",   (v) => v.toFixed(1), " h"],
+    ["睡眠分數",  "sleep_score",   (v) => v.toFixed(0), " /100"],
     ["靜息心率",  "resting_hr",    (v) => v.toFixed(0), " bpm"],
     ["HRV",       "hrv",           (v) => v.toFixed(0), " ms"],
     ["血氧 (日均)", "spo2",        (v) => v.toFixed(1), " %"],
     ["步數",      "steps",         (v) => v.toFixed(0), ""],
-    ["活動消耗",  "active_energy", (v) => v.toFixed(0), " kcal"],
+    ["日照",      "daylight",      (v) => v.toFixed(0), " 分"],
   ];
   for (const [lbl, col, fmt, suffix] of items) {
     if (!state.filtered.columns.includes(col)) {
@@ -207,7 +265,7 @@ function setupTrendPicker() {
   const picker = $("#trendPicker");
   picker.innerHTML = "";
   const cols = analyzableColumns(state.frame, 3);
-  const defaults = ["sleep_hours", "resting_hr", "hrv", "spo2", "steps"]
+  const defaults = ["readiness", "hrv", "resting_hr", "sleep_score"]
     .filter((c) => cols.includes(c)).slice(0, 3);
   for (const col of cols) {
     const id = `pk-${col}`;
@@ -378,9 +436,13 @@ function renderAnomalies() {
 
 // ---------------- daily table --------------------------------------------
 
+function isDerivedCol(c) {
+  return c.endsWith("_baseline30") || c.endsWith("_zscore30");
+}
+
 function renderDailyTable() {
   if (!state.filtered) return;
-  const cols = state.filtered.columns;
+  const cols = state.filtered.columns.filter((c) => !isDerivedCol(c));
   const head = $("#dailyTable thead");
   const body = $("#dailyTable tbody");
   head.innerHTML = "<tr><th>日期</th>" + cols.map((c) => `<th class="num">${labelOf(c)}</th>`).join("") + "</tr>";
@@ -403,6 +465,8 @@ function renderDailyTable() {
 }
 
 function downloadCsv() {
+  // CSV includes the rolling-baseline / z-score columns so users have the full
+  // Phase 3 inputs available offline.
   const cols = state.filtered.columns;
   const header = ["date", ...cols].join(",");
   const lines = state.filtered.rows.map((r) => {
