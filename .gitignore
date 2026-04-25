@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+.DS_Store
+.streamlit/secrets.toml
+
+# Apple Health exports can be huge & private
+export.xml
+export.zip
+export_cda.xml
+apple_health_export/
+data/
+*.parquet
+.cache/

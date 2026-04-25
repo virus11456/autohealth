@@ -1,0 +1,128 @@
+"""Generate a small synthetic Apple Health export.xml for smoke-testing.
+
+Writes ./sample_data/export.xml. Not committed to git (data/ ignored), but
+re-runnable. Synthesized values include realistic correlations so the
+analyzer has something interesting to find.
+"""
+from __future__ import annotations
+
+import math
+import random
+from datetime import datetime, timedelta
+from pathlib import Path
+from xml.sax.saxutils import escape
+
+random.seed(42)
+
+OUT = Path(__file__).resolve().parent.parent / "sample_data" / "export.xml"
+OUT.parent.mkdir(parents=True, exist_ok=True)
+
+DAYS = 120
+start_date = datetime(2026, 1, 1, 0, 0, 0)
+
+
+def fmt(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%d %H:%M:%S +0000")
+
+
+def record(rtype: str, unit: str, value: str, start: datetime, end: datetime, source="iPhone") -> str:
+    return (
+        f'<Record type="{rtype}" sourceName="{source}" '
+        f'unit="{unit}" startDate="{fmt(start)}" endDate="{fmt(end)}" '
+        f'value="{escape(str(value))}"/>'
+    )
+
+
+def category(rtype: str, value: str, start: datetime, end: datetime, source="Watch") -> str:
+    return (
+        f'<Record type="{rtype}" sourceName="{source}" '
+        f'startDate="{fmt(start)}" endDate="{fmt(end)}" value="{value}"/>'
+    )
+
+
+lines = ['<?xml version="1.0" encoding="UTF-8"?>', "<HealthData>"]
+
+for d in range(DAYS):
+    day = start_date + timedelta(days=d)
+
+    # weekly cycle + slow trend so insights have something to find
+    weekday = day.weekday()
+    weekly = math.sin(2 * math.pi * d / 7)
+    trend = d / DAYS
+
+    sleep_hours = max(4.5, 7.4 + 0.6 * weekly - 0.5 * trend + random.gauss(0, 0.4))
+    sleep_efficiency = min(0.97, 0.88 + 0.04 * weekly + random.gauss(0, 0.03))
+
+    # resting HR inversely related to sleep + HRV; rises with trend
+    resting_hr = 60 - 1.8 * (sleep_hours - 7) + 4 * trend + random.gauss(0, 1.5)
+    hrv = 55 + 5 * (sleep_hours - 7) - 8 * trend + random.gauss(0, 4)
+    spo2_base = 97.5 + random.gauss(0, 0.4)
+    steps = max(0, int(8500 + 4000 * weekly - 1500 * (weekday >= 5) + random.gauss(0, 1500)))
+    active_kcal = max(50, 350 + 0.04 * steps + random.gauss(0, 60))
+    distance_km = steps * 0.00075
+    flights = max(0, int(8 + random.gauss(0, 4)))
+    resp = 14 + random.gauss(0, 1.2)
+    body_temp = 36.6 + random.gauss(0, 0.15)
+
+    # inject a couple of clear anomalies
+    if d == 80:
+        resting_hr += 12
+        hrv -= 20
+        spo2_base -= 2
+    if d == 100:
+        sleep_hours = 3.5
+        sleep_efficiency = 0.62
+
+    # sleep session ending at day 07:30
+    sleep_end = day.replace(hour=7, minute=30)
+    sleep_start = sleep_end - timedelta(hours=sleep_hours)
+    in_bed_minutes = sleep_hours * 60 / max(0.5, sleep_efficiency)
+    in_bed_start = sleep_end - timedelta(minutes=in_bed_minutes)
+
+    lines.append(category(
+        "HKCategoryTypeIdentifierSleepAnalysis",
+        "HKCategoryValueSleepAnalysisInBed",
+        in_bed_start, sleep_end,
+    ))
+    # split asleep into core/deep/rem
+    deep = sleep_hours * 0.18
+    rem = sleep_hours * 0.22
+    core = sleep_hours - deep - rem
+    cursor = sleep_start
+    for stage_value, hours in (
+        ("HKCategoryValueSleepAnalysisAsleepCore", core),
+        ("HKCategoryValueSleepAnalysisAsleepDeep", deep),
+        ("HKCategoryValueSleepAnalysisAsleepREM", rem),
+    ):
+        seg_end = cursor + timedelta(hours=hours)
+        lines.append(category(
+            "HKCategoryTypeIdentifierSleepAnalysis", stage_value, cursor, seg_end,
+        ))
+        cursor = seg_end
+
+    # daily quantity records (one per day for simplicity; parser aggregates same)
+    noon = day.replace(hour=12)
+    lines.append(record("HKQuantityTypeIdentifierStepCount", "count", steps, noon, noon + timedelta(minutes=1)))
+    lines.append(record("HKQuantityTypeIdentifierActiveEnergyBurned", "kcal", round(active_kcal, 1), noon, noon + timedelta(minutes=1)))
+    lines.append(record("HKQuantityTypeIdentifierDistanceWalkingRunning", "km", round(distance_km, 3), noon, noon + timedelta(minutes=1)))
+    lines.append(record("HKQuantityTypeIdentifierFlightsClimbed", "count", flights, noon, noon + timedelta(minutes=1)))
+    lines.append(record("HKQuantityTypeIdentifierRestingHeartRate", "count/min", round(resting_hr, 1), noon, noon + timedelta(minutes=1)))
+    lines.append(record("HKQuantityTypeIdentifierHeartRateVariabilitySDNN", "ms", round(max(5, hrv), 1), noon, noon + timedelta(minutes=1)))
+    lines.append(record("HKQuantityTypeIdentifierRespiratoryRate", "count/min", round(resp, 1), noon, noon + timedelta(minutes=1)))
+    lines.append(record("HKQuantityTypeIdentifierBodyTemperature", "degC", round(body_temp, 2), noon, noon + timedelta(minutes=1)))
+
+    # multiple HR samples through the day
+    for h in (8, 12, 18, 22):
+        ts = day.replace(hour=h)
+        hr_val = resting_hr + random.uniform(5, 35) + (10 if h == 18 else 0)
+        lines.append(record("HKQuantityTypeIdentifierHeartRate", "count/min", round(hr_val, 1), ts, ts + timedelta(seconds=30)))
+
+    # SpO2 readings, including a few during sleep
+    for h in (3, 5, 14):
+        ts = day.replace(hour=h)
+        val = spo2_base + random.gauss(0, 0.6)
+        lines.append(record("HKQuantityTypeIdentifierOxygenSaturation", "%", round(min(100, max(85, val)), 1), ts, ts + timedelta(seconds=30)))
+
+lines.append("</HealthData>")
+OUT.write_text("\n".join(lines), encoding="utf-8")
+print(f"wrote {OUT} ({OUT.stat().st_size/1024:.1f} KB)")
