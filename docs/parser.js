@@ -78,8 +78,28 @@ async function* streamLines(stream) {
 // Apple translates the export filename per device locale.
 const KNOWN_EXPORT_NAMES = ["export.xml", "輸出.xml", "导出.xml", "エクスポート.xml"];
 
+// fflate decodes zip entry names as Latin-1 when the spec's UTF-8 flag bit
+// (0x800) isn't set, but macOS/iOS-created zips often store UTF-8 bytes in the
+// header without setting the flag — the user sees mojibake like
+// "apple_health_export/è¼¸å‡º.xml" for what should be "apple_health_export/輸出.xml".
+// Recover by re-encoding the string as Latin-1 bytes and decoding them as UTF-8.
+function decodeName(name) {
+  if (!/[\x80-\xff]/.test(name)) return name;
+  try {
+    const bytes = new Uint8Array(name.length);
+    for (let i = 0; i < name.length; i++) {
+      const c = name.charCodeAt(i);
+      if (c > 0xff) return name;
+      bytes[i] = c;
+    }
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return name;
+  }
+}
+
 function isExportEntry(name) {
-  return KNOWN_EXPORT_NAMES.includes(name.split("/").pop());
+  return KNOWN_EXPORT_NAMES.includes(decodeName(name).split("/").pop());
 }
 
 // Stream the matching export.xml entry out of a zip without ever holding the
@@ -113,7 +133,7 @@ async function getXmlStream(file, onProgress) {
     }, new ByteLengthQueuingStrategy({ highWaterMark: 4 * 1024 * 1024 }));
 
     const unzipper = new fflate.Unzip((entry) => {
-      if (entry.name.toLowerCase().endsWith(".xml")) seenXmls.push(entry.name);
+      if (entry.name.toLowerCase().endsWith(".xml")) seenXmls.push(decodeName(entry.name));
       if (matched) return;
       if (!isExportEntry(entry.name)) return;
       matched = entry.name;
