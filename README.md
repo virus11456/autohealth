@@ -18,7 +18,23 @@
 步行心率、HRV (SDNN)、血氧、呼吸頻率、體溫、VO2 Max，以及睡眠分析（深睡 /
 REM / 清醒分鐘、效率、就寢時點、睡眠期間最低血氧）。
 
-## 安裝與啟動
+## 兩種使用方式
+
+### A. 純瀏覽器版（推薦）— GitHub Pages
+
+`docs/` 內是純 HTML/JS 版本，所有解析在你的瀏覽器內進行，**資料不離開電腦**。
+部署到 GitHub Pages 即可拿到一個公開網址自己用：
+
+1. Repo Settings → Pages
+2. Source: Deploy from a branch
+3. Branch: `claude/health-analytics-dashboard-At7IF`，Folder: `/docs`
+4. 等 1–2 分鐘，會給你 `https://<user>.github.io/autohealth/` 的網址
+
+> 想本機跑也行：`cd docs && python3 -m http.server`，瀏覽器開
+> `http://localhost:8000`。**不要直接雙擊 index.html**，瀏覽器
+> 對 `file://` 下的 ES module 會擋。
+
+### B. Python 版（本機，給愛 Streamlit 的人）
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -41,11 +57,24 @@ iPhone「**健康** App → 個人頭像 → 匯出所有健康資料**」會產
 ## 結構
 
 ```
-healthkit/
-  parser.py      # 串流解析 export.xml（可吃幾百 MB）
-  aggregator.py  # 各指標 → 每日聚合（含睡眠分段）
-  analyzer.py    # 相關矩陣、延遲相關、異常偵測、洞察生成
-app.py           # Streamlit UI
+docs/                # 純前端版（GitHub Pages 部署目標）
+  index.html
+  app.js             # UI 與互動
+  parser.js          # 瀏覽器內串流 XML / ZIP 解析
+  aggregator.js      # 每日聚合
+  analyzer.js        # Spearman / 延遲相關 / 異常 / 洞察
+  styles.css
+
+healthkit/           # Python 版（Streamlit）
+  parser.py          # 串流解析 export.xml（可吃幾百 MB）
+  aggregator.py      # 各指標 → 每日聚合（含睡眠分段）
+  analyzer.py        # 相關矩陣、延遲相關、異常偵測、洞察生成
+app.py               # Streamlit UI
+
+scripts/
+  make_sample_export.py  # 產合成 export 用於測試
+  smoke_test.py          # Python 端對端測試
+  smoke_test.mjs         # JS 端對端測試（驗證兩版結果一致）
 ```
 
 ## 注意

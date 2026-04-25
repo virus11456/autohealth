@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AutoHealth — Apple Health 跨維度分析</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext x='0' y='13' font-size='14'%3E%E2%9D%A4%3C/text%3E%3C/svg%3E" />
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>❤ AutoHealth — Apple Health 跨維度分析</h1>
+    <div class="subtitle">所有解析在你瀏覽器內進行，資料不會上傳到任何伺服器。</div>
+  </div>
+  <div>
+    <a href="https://github.com/virus11456/autohealth" target="_blank" rel="noopener">GitHub</a>
+  </div>
+</header>
+
+<main>
+
+<!-- Upload -->
+<div id="uploadCard" class="card">
+  <h2>1. 上傳 Apple Health 匯出檔</h2>
+  <div id="dropzone" class="dropzone">
+    <div>📂 拖曳 <strong>匯出.zip</strong> 或 <strong>export.xml</strong> 到這裡</div>
+    <div class="hint">或點此選擇檔案。所有處理都在本地，不會上傳。</div>
+    <input type="file" id="fileInput" accept=".zip,.xml" hidden>
+  </div>
+  <div id="progressWrap" style="display:none">
+    <div class="progress"><div></div></div>
+    <div class="progress-text" id="progressText"></div>
+  </div>
+  <div class="muted" style="margin-top:14px">
+    取得方式：iPhone「健康 App → 個人頭像 → 匯出所有健康資料」會產生 <code>匯出.zip</code>。
+  </div>
+</div>
+
+<!-- Dashboard -->
+<div id="dashboard" style="display:none">
+
+  <div class="card">
+    <div class="controls">
+      <div>
+        <label>分析期間</label>
+        <div class="row">
+          <input type="date" id="dateStart" />
+          <input type="date" id="dateEnd" />
+        </div>
+      </div>
+      <div>
+        <label>滾動平均視窗 (天)</label>
+        <input type="number" id="window" min="2" max="60" step="1" />
+      </div>
+      <div>
+        <label>異常 σ 閾值</label>
+        <input type="number" id="sigma" min="1" max="5" step="0.5" />
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="kpi-row" id="kpis"></div>
+  </div>
+
+  <div class="card">
+    <div class="tabs">
+      <button class="tab active" data-tab="tab-insights">🤖 自動洞察</button>
+      <button class="tab" data-tab="tab-trend">📈 趨勢</button>
+      <button class="tab" data-tab="tab-corr">🔗 相關矩陣</button>
+      <button class="tab" data-tab="tab-lag">⏱ 延遲相關</button>
+      <button class="tab" data-tab="tab-anom">⚠ 異常天</button>
+      <button class="tab" data-tab="tab-data">🧾 每日資料</button>
+    </div>
+
+    <div id="tab-insights" class="tab-content active">
+      <div id="insightsList"></div>
+    </div>
+
+    <div id="tab-trend" class="tab-content">
+      <div class="metric-picker" id="trendPicker"></div>
+      <div id="chart"></div>
+      <div class="muted">提示：原始點疊上滾動平均線。多指標同 y 軸，看趨勢方向；想看單位差異大的指標關聯，請看「相關矩陣」分頁。</div>
+    </div>
+
+    <div id="tab-corr" class="tab-content">
+      <div class="muted" style="margin-bottom:8px">Spearman 相關（順序統計，對非線性與離群值穩健）；藍 = 正相關，紅 = 負相關。</div>
+      <div id="heatmap"></div>
+    </div>
+
+    <div id="tab-lag" class="tab-content">
+      <h3 style="margin:4px 0 6px 0; font-size:0.95rem;">驅動因子（行為類）</h3>
+      <div class="metric-picker" id="driversPicker"></div>
+      <h3 style="margin:10px 0 6px 0; font-size:0.95rem;">反應因子（身體狀態）</h3>
+      <div class="metric-picker" id="responsesPicker"></div>
+      <div class="row" style="display:flex; gap:8px; margin-bottom:10px;">
+        <div><label class="muted">lag 起點</label> <input type="number" id="lagFrom" value="-1" style="width:80px;background:var(--panel-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px"></div>
+        <div><label class="muted">lag 終點</label> <input type="number" id="lagTo" value="2" style="width:80px;background:var(--panel-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px"></div>
+      </div>
+      <div class="scroll-x">
+        <table id="lagTable">
+          <thead><tr>
+            <th>驅動</th><th>反應</th><th class="num">延遲 (天)</th>
+            <th class="num">相關 r</th><th class="num">p</th><th class="num">天數</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="muted" style="margin-top:8px">
+        延遲為正 = 反應在驅動之後 N 天測得。例：sleep_hours → resting_hr (lag = 1) 代表「今晚睡眠時數 vs 隔天靜息心跳」。
+      </div>
+    </div>
+
+    <div id="tab-anom" class="tab-content">
+      <h3 id="anomTitle" style="margin:0 0 10px 0; font-size:1rem;"></h3>
+      <div class="scroll-x">
+        <table id="anomTable">
+          <thead><tr>
+            <th>日期</th><th>指標</th><th class="num">當日值</th>
+            <th class="num">基準均值</th><th class="num">Z 分數</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="tab-data" class="tab-content">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <span class="muted" id="dailyHint"></span>
+        <button class="primary" id="downloadCsv">下載完整 CSV</button>
+      </div>
+      <div class="scroll-x" style="max-height:540px; overflow:auto;">
+        <table id="dailyTable"><thead></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+<div class="footer-note">
+  ⚠ 本工具僅作生活資料探索之用，<strong>不能取代醫療診斷</strong>。任何持續性異常請諮詢醫師。
+</div>
+
+</main>
+
+<!-- Vendor scripts (CDN) -->
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js" defer></script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" defer></script>
+<script type="module" src="app.js"></script>
+
+</body>
+</html>
