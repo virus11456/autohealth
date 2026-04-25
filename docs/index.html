@@ -12,7 +12,10 @@
 <header>
   <div>
     <h1>❤ AutoHealth — Apple Health 跨維度分析</h1>
-    <div class="subtitle">所有解析在你瀏覽器內進行，資料不會上傳到任何伺服器。</div>
+    <div class="subtitle">
+      免費、開源、純瀏覽器運算。上傳你的 Apple Health 匯出檔，立刻看趨勢、找相關、抓異常 —
+      <strong>資料只在你的裝置裡</strong>。
+    </div>
   </div>
   <div>
     <a href="https://github.com/virus11456/autohealth" target="_blank" rel="noopener">GitHub</a>
@@ -21,12 +24,26 @@
 
 <main>
 
+<!-- Privacy banner -->
+<div class="privacy-banner card">
+  <div class="privacy-icon">🔒</div>
+  <div class="privacy-text">
+    <div class="privacy-title">你的健康資料只有你自己看得到</div>
+    <div class="privacy-detail">
+      這個網站是 GitHub Pages 上的靜態頁面，<strong>沒有後端、沒有資料庫、沒有第三方追蹤</strong>。
+      你選的檔案在瀏覽器裡解析、分析、繪圖，全程<strong>不會送到任何伺服器</strong>，關掉分頁就消失。
+      不信？開啟 DevTools → Network 分頁再上傳一次，除了第一次載入網頁本身，不會看到任何上傳請求；
+      原始碼也都在 <a href="https://github.com/virus11456/autohealth" target="_blank" rel="noopener">GitHub</a> 上可驗證。
+    </div>
+  </div>
+</div>
+
 <!-- Upload -->
 <div id="uploadCard" class="card">
-  <h2>1. 上傳 Apple Health 匯出檔</h2>
+  <h2>上傳你的 Apple Health 匯出檔</h2>
   <div id="dropzone" class="dropzone">
     <div>📂 拖曳 <strong>匯出.zip</strong> 或 <strong>export.xml</strong> 到這裡</div>
-    <div class="hint">或點此選擇檔案。所有處理都在本地，不會上傳。</div>
+    <div class="hint">或點此選擇檔案。檔案不會離開你的瀏覽器。</div>
     <input type="file" id="fileInput" accept=".zip,.xml" hidden>
   </div>
   <div id="progressWrap" style="display:none">
@@ -34,7 +51,8 @@
     <div class="progress-text" id="progressText"></div>
   </div>
   <div class="muted" style="margin-top:14px">
-    取得方式：iPhone「健康 App → 個人頭像 → 匯出所有健康資料」會產生 <code>匯出.zip</code>。
+    取得方式：iPhone <strong>「健康 App → 右上角個人頭像 → 匯出所有健康資料」</strong>
+    會產生 <code>匯出.zip</code>，可直接 AirDrop 到電腦再丟到上面框框。
   </div>
 </div>
 

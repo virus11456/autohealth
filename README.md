@@ -1,5 +1,12 @@
 # AutoHealth — Apple Health 跨維度分析儀表板
 
+> **🌐 公開網址**：<https://virus11456.github.io/autohealth/>
+>
+> 任何人都可以打開上面網址，**上傳自己的 Apple Health 匯出檔**做分析。
+> 整個網站是 GitHub Pages 上的靜態頁面，**沒有後端、沒有資料庫**：
+> 你的健康資料在瀏覽器裡解析、分析、繪圖，**不會送到任何伺服器、也不會被儲存**，
+> 關掉分頁就消失，只有你自己看得到。原始碼公開可驗證。
+
 把 Apple Health 匯出的「太基礎」數據（睡眠、血氧、心跳、步數、HRV…）自動化成
 可看趨勢、跨維度對照、找異常的儀表板。
 
@@ -51,8 +58,15 @@ iPhone「**健康** App → 個人頭像 → 匯出所有健康資料**」會產
 
 ## 隱私
 
-所有解析與分析都在本機完成，不會上傳任何資料。`.gitignore` 已排除
-`export.xml` / `export.zip` / `data/` / `.cache/`。
+- **網站本身沒有後端**：GitHub Pages 上純靜態 HTML/JS，無伺服器、無資料庫、無第三方追蹤。
+- **檔案不離開瀏覽器**：你選的 `匯出.zip` / `export.xml` 由瀏覽器內的 JS 直接解析，
+  從頭到尾沒有 `fetch()` / `XMLHttpRequest()` 把檔案送出去。可以打開 DevTools →
+  Network 分頁自己驗證：上傳檔案後不會看到任何 outgoing request。
+- **關分頁即消失**：分析結果只存在當下頁面記憶體中，沒有寫入 `localStorage` /
+  `IndexedDB` / cookie，關掉分頁就什麼都沒了。
+- **原始碼公開**：整個 `docs/` 目錄就是線上跑的程式，可審。
+- `.gitignore` 已排除 `export.xml` / `export.zip` / `data/` / `.cache/`，
+  避免你把自己的資料不小心提交進 repo。
 
 ## 結構
 
