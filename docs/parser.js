@@ -17,6 +17,9 @@ const SUPPORTED = [
   { key: "respiratory",   hk: "HKQuantityTypeIdentifierRespiratoryRate",            label: "呼吸頻率",        unit: "次/分",      agg: "mean" },
   { key: "body_temp",     hk: "HKQuantityTypeIdentifierBodyTemperature",            label: "體溫",            unit: "°C",         agg: "mean" },
   { key: "vo2max",        hk: "HKQuantityTypeIdentifierVO2Max",                     label: "VO2 Max",         unit: "ml/kg·min",  agg: "mean" },
+  { key: "walking_asymmetry", hk: "HKQuantityTypeIdentifierWalkingAsymmetryPercentage",     label: "步行不對稱率",   unit: "%",          agg: "mean" },
+  { key: "double_support",    hk: "HKQuantityTypeIdentifierWalkingDoubleSupportPercentage", label: "雙腳支撐時間",   unit: "%",          agg: "mean" },
+  { key: "daylight",          hk: "HKQuantityTypeIdentifierTimeInDaylight",                 label: "日照時間",       unit: "分鐘",       agg: "sum"  },
 ];
 
 const SLEEP_HK = "HKCategoryTypeIdentifierSleepAnalysis";

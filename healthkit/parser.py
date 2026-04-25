@@ -38,6 +38,9 @@ SUPPORTED_TYPES: tuple[MetricSpec, ...] = (
     MetricSpec("respiratory", "HKQuantityTypeIdentifierRespiratoryRate", "呼吸頻率", "次/分", "mean"),
     MetricSpec("body_temp", "HKQuantityTypeIdentifierBodyTemperature", "體溫", "°C", "mean"),
     MetricSpec("vo2max", "HKQuantityTypeIdentifierVO2Max", "VO2 Max", "ml/kg·min", "mean"),
+    MetricSpec("walking_asymmetry", "HKQuantityTypeIdentifierWalkingAsymmetryPercentage", "步行不對稱率", "%", "mean"),
+    MetricSpec("double_support", "HKQuantityTypeIdentifierWalkingDoubleSupportPercentage", "雙腳支撐時間", "%", "mean"),
+    MetricSpec("daylight", "HKQuantityTypeIdentifierTimeInDaylight", "日照時間", "分鐘", "sum"),
 )
 
 SLEEP_TYPE = "HKCategoryTypeIdentifierSleepAnalysis"

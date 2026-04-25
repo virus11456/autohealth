@@ -64,6 +64,14 @@ for d in range(DAYS):
     resp = 14 + random.gauss(0, 1.2)
     body_temp = 36.6 + random.gauss(0, 0.15)
 
+    # gait + environment metrics
+    # asymmetry climbs slightly on high-step days (overload proxy);
+    # double-support tracks asymmetry; daylight tracks sleep (circadian proxy).
+    overload = max(0, (steps - 9000) / 4000)
+    walking_asym = max(0.4, 1.8 + 1.4 * overload + random.gauss(0, 0.4))
+    double_support = max(20.0, 26.0 + 0.6 * walking_asym + random.gauss(0, 1.2))
+    daylight_min = max(0, 45 + 12 * (sleep_hours - 7) - 25 * (weekday >= 5) + random.gauss(0, 12))
+
     # inject a couple of clear anomalies
     if d == 80:
         resting_hr += 12
@@ -110,8 +118,16 @@ for d in range(DAYS):
     lines.append(record("HKQuantityTypeIdentifierHeartRateVariabilitySDNN", "ms", round(max(5, hrv), 1), noon, noon + timedelta(minutes=1)))
     lines.append(record("HKQuantityTypeIdentifierRespiratoryRate", "count/min", round(resp, 1), noon, noon + timedelta(minutes=1)))
     lines.append(record("HKQuantityTypeIdentifierBodyTemperature", "degC", round(body_temp, 2), noon, noon + timedelta(minutes=1)))
+    lines.append(record("HKQuantityTypeIdentifierWalkingAsymmetryPercentage", "%", round(walking_asym, 2), noon, noon + timedelta(minutes=1)))
+    lines.append(record("HKQuantityTypeIdentifierWalkingDoubleSupportPercentage", "%", round(double_support, 2), noon, noon + timedelta(minutes=1)))
 
-    # multiple HR samples through the day
+    # daylight: split across two outdoor windows so the parser sums multiple records
+    morning = day.replace(hour=10)
+    afternoon = day.replace(hour=15)
+    am_min = round(daylight_min * 0.55, 1)
+    pm_min = round(daylight_min - am_min, 1)
+    lines.append(record("HKQuantityTypeIdentifierTimeInDaylight", "min", am_min, morning, morning + timedelta(minutes=am_min)))
+    lines.append(record("HKQuantityTypeIdentifierTimeInDaylight", "min", pm_min, afternoon, afternoon + timedelta(minutes=pm_min)))
     for h in (8, 12, 18, 22):
         ts = day.replace(hour=h)
         hr_val = resting_hr + random.uniform(5, 35) + (10 if h == 18 else 0)
