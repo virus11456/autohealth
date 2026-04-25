@@ -45,6 +45,36 @@ SLEEP_TYPE = "HKCategoryTypeIdentifierSleepAnalysis"
 _TYPE_INDEX: Mapping[str, MetricSpec] = {m.hk_type: m for m in SUPPORTED_TYPES}
 
 
+# Apple translates the export filename per device locale, so en uses
+# "export.xml" but zh-Hant gives "輸出.xml", zh-Hans "导出.xml", ja "エクスポート.xml".
+_KNOWN_EXPORT_NAMES = ("export.xml", "輸出.xml", "导出.xml", "エクスポート.xml")
+
+
+def _find_export_xml(namelist: list[str]) -> str | None:
+    for known in _KNOWN_EXPORT_NAMES:
+        for n in namelist:
+            if n == known or n.endswith("/" + known):
+                return n
+    # Fallback: pick a non-CDA .xml sitting in the same directory as export_cda.xml.
+    cda = next((n for n in namelist if n.lower().endswith("export_cda.xml")), None)
+    prefix = cda.rsplit("/", 1)[0] + "/" if cda and "/" in cda else ""
+    for n in namelist:
+        ln = n.lower()
+        if not ln.endswith(".xml") or ln.endswith("export_cda.xml"):
+            continue
+        if prefix:
+            if n.startswith(prefix) and "/" not in n[len(prefix):]:
+                return n
+        elif n.count("/") <= 1:
+            return n
+    return None
+
+
+def _missing_xml_error(namelist: list[str], where: str) -> ValueError:
+    xmls = [n for n in namelist if n.lower().endswith(".xml")] or ["(無 .xml)"]
+    return ValueError(f"{where} 內找不到 export.xml；zip 中的 .xml 檔：{xmls}")
+
+
 def _open_xml(source: str | Path | IO[bytes]) -> IO[bytes]:
     """Accept a path/zip/file-like and return a binary file-like for export.xml."""
     if hasattr(source, "read"):
@@ -52,18 +82,18 @@ def _open_xml(source: str | Path | IO[bytes]) -> IO[bytes]:
         source.seek(0)
         if head[:2] == b"PK":
             zf = zipfile.ZipFile(source)
-            name = next((n for n in zf.namelist() if n.endswith("export.xml")), None)
+            name = _find_export_xml(zf.namelist())
             if name is None:
-                raise ValueError("zip does not contain export.xml")
+                raise _missing_xml_error(zf.namelist(), "zip")
             return zf.open(name)
         return source  # assume plain XML stream
 
     path = Path(source)
     if path.suffix.lower() == ".zip":
         zf = zipfile.ZipFile(path)
-        name = next((n for n in zf.namelist() if n.endswith("export.xml")), None)
+        name = _find_export_xml(zf.namelist())
         if name is None:
-            raise ValueError(f"{path} does not contain export.xml")
+            raise _missing_xml_error(zf.namelist(), str(path))
         return zf.open(name)
     return path.open("rb")
 

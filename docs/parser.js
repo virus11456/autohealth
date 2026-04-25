@@ -73,6 +73,28 @@ async function* streamLines(stream) {
   }
 }
 
+// Apple translates the export filename per device locale.
+const KNOWN_EXPORT_NAMES = ["export.xml", "輸出.xml", "导出.xml", "エクスポート.xml"];
+
+function findExportEntry(zip) {
+  const files = Object.values(zip.files).filter((f) => !f.dir);
+  for (const known of KNOWN_EXPORT_NAMES) {
+    const hit = files.find((f) => f.name === known || f.name.endsWith("/" + known));
+    if (hit) return hit;
+  }
+  // Fallback: the main XML lives next to export_cda.xml in the export folder.
+  const cda = files.find((f) => f.name.toLowerCase().endsWith("export_cda.xml"));
+  const prefix = cda ? cda.name.slice(0, cda.name.lastIndexOf("/") + 1) : "";
+  return files.find((f) => {
+    const ln = f.name.toLowerCase();
+    if (!ln.endsWith(".xml") || ln.endsWith("export_cda.xml")) return false;
+    if (prefix) {
+      return f.name.startsWith(prefix) && f.name.indexOf("/", prefix.length) === -1;
+    }
+    return f.name.split("/").length <= 2;
+  }) || null;
+}
+
 async function getXmlStream(file, onProgress) {
   // Sniff zip magic
   const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
@@ -86,8 +108,13 @@ async function getXmlStream(file, onProgress) {
   }
   onProgress && onProgress({ phase: "unzip", message: "解壓縮中…" });
   const zip = await JSZip.loadAsync(file);
-  const entry = Object.values(zip.files).find((f) => f.name.endsWith("export.xml"));
-  if (!entry) throw new Error("zip 內找不到 export.xml");
+  const entry = findExportEntry(zip);
+  if (!entry) {
+    const xmls = Object.values(zip.files)
+      .filter((f) => !f.dir && f.name.toLowerCase().endsWith(".xml"))
+      .map((f) => f.name);
+    throw new Error(`zip 內找不到 export.xml；zip 中的 .xml 檔：${xmls.length ? xmls.join(", ") : "(無)"}`);
+  }
   // Decompress fully into a Blob; for huge exports this peaks at file size in
   // memory but is the only portable path without a streaming inflate library.
   const blob = await entry.async("blob");
