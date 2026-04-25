@@ -1,6 +1,8 @@
 // Stream-parse Apple Health export.xml entirely in the browser.
-// Handles .zip (via JSZip from CDN) and raw .xml. Memory stays bounded
-// because we read the file as a stream and only keep the records we want.
+// Handles .zip (via fflate streaming Unzip) and raw .xml. Memory stays
+// bounded throughout: zip bytes are pushed in chunks, fflate inflates
+// chunk-by-chunk into a ReadableStream that the line parser consumes
+// incrementally. A 1.6 GB inflated XML never sits in memory whole.
 
 const SUPPORTED = [
   { key: "steps",         hk: "HKQuantityTypeIdentifierStepCount",                  label: "步數",            unit: "步",         agg: "sum"  },
@@ -76,49 +78,94 @@ async function* streamLines(stream) {
 // Apple translates the export filename per device locale.
 const KNOWN_EXPORT_NAMES = ["export.xml", "輸出.xml", "导出.xml", "エクスポート.xml"];
 
-function findExportEntry(zip) {
-  const files = Object.values(zip.files).filter((f) => !f.dir);
-  for (const known of KNOWN_EXPORT_NAMES) {
-    const hit = files.find((f) => f.name === known || f.name.endsWith("/" + known));
-    if (hit) return hit;
-  }
-  // Fallback: the main XML lives next to export_cda.xml in the export folder.
-  const cda = files.find((f) => f.name.toLowerCase().endsWith("export_cda.xml"));
-  const prefix = cda ? cda.name.slice(0, cda.name.lastIndexOf("/") + 1) : "";
-  return files.find((f) => {
-    const ln = f.name.toLowerCase();
-    if (!ln.endsWith(".xml") || ln.endsWith("export_cda.xml")) return false;
-    if (prefix) {
-      return f.name.startsWith(prefix) && f.name.indexOf("/", prefix.length) === -1;
-    }
-    return f.name.split("/").length <= 2;
-  }) || null;
+function isExportEntry(name) {
+  return KNOWN_EXPORT_NAMES.includes(name.split("/").pop());
 }
 
+// Stream the matching export.xml entry out of a zip without ever holding the
+// inflated file in memory. fflate's Unzip is push-based: we feed it zip bytes
+// as we read them; for each entry header it sees, onfile fires synchronously.
+// We selectively call entry.start() on the matching entry and route its
+// inflated chunks into a ReadableStream that the rest of the pipeline reads.
 async function getXmlStream(file, onProgress) {
-  // Sniff zip magic
   const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
   const isZip = head[0] === 0x50 && head[1] === 0x4b;
   if (!isZip) {
     return { stream: file.stream(), totalBytes: file.size };
   }
-  // Lazy-load JSZip; available globally as JSZip from CDN script tag.
-  if (typeof JSZip === "undefined") {
-    throw new Error("JSZip 未載入，無法解 zip");
+  if (typeof fflate === "undefined") {
+    throw new Error("fflate 未載入，無法解 zip");
   }
   onProgress && onProgress({ phase: "unzip", message: "解壓縮中…" });
-  const zip = await JSZip.loadAsync(file);
-  const entry = findExportEntry(zip);
-  if (!entry) {
-    const xmls = Object.values(zip.files)
-      .filter((f) => !f.dir && f.name.toLowerCase().endsWith(".xml"))
-      .map((f) => f.name);
-    throw new Error(`zip 內找不到 export.xml；zip 中的 .xml 檔：${xmls.length ? xmls.join(", ") : "(無)"}`);
-  }
-  // Decompress fully into a Blob; for huge exports this peaks at file size in
-  // memory but is the only portable path without a streaming inflate library.
-  const blob = await entry.async("blob");
-  return { stream: blob.stream(), totalBytes: blob.size };
+
+  return new Promise((resolveReady, rejectReady) => {
+    const seenXmls = [];
+    let matched = null;
+    let streamController = null;
+    let resumePump = null;
+    const wakeup = () => { const r = resumePump; resumePump = null; if (r) r(); };
+
+    // 4 MB cap on the inflated queue keeps memory bounded even when fflate
+    // outpaces the line parser.
+    const xmlStream = new ReadableStream({
+      start(c) { streamController = c; },
+      pull() { wakeup(); },
+    }, new ByteLengthQueuingStrategy({ highWaterMark: 4 * 1024 * 1024 }));
+
+    const unzipper = new fflate.Unzip((entry) => {
+      if (entry.name.toLowerCase().endsWith(".xml")) seenXmls.push(entry.name);
+      if (matched) return;
+      if (!isExportEntry(entry.name)) return;
+      matched = entry.name;
+      entry.ondata = (err, chunk, final) => {
+        if (err) { streamController.error(err); return; }
+        // chunk may be reused by fflate on the next callback; copy.
+        streamController.enqueue(new Uint8Array(chunk));
+        if (final) streamController.close();
+      };
+      entry.start();
+      resolveReady({ stream: xmlStream, totalBytes: entry.originalSize || 0 });
+    });
+    unzipper.register(fflate.UnzipInflate);
+
+    (async () => {
+      const reader = file.stream().getReader();
+      let bytesRead = 0;
+      let lastTick = 0;
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) {
+            unzipper.push(new Uint8Array(0), true);
+            break;
+          }
+          unzipper.push(value, false);
+          bytesRead += value.byteLength;
+          // pause until consumer drains below highWaterMark
+          while (matched && streamController.desiredSize !== null && streamController.desiredSize <= 0) {
+            await new Promise((res) => { resumePump = res; });
+          }
+          const now = Date.now();
+          if (onProgress && !matched && now - lastTick > 100) {
+            lastTick = now;
+            onProgress({
+              phase: "unzip",
+              message: "解壓縮中…",
+              progress: file.size ? bytesRead / file.size : null,
+            });
+          }
+        }
+        if (!matched) {
+          rejectReady(new Error(
+            `zip 內找不到 export.xml；zip 中的 .xml 檔：${seenXmls.length ? seenXmls.join(", ") : "(無)"}`,
+          ));
+        }
+      } catch (e) {
+        if (matched) streamController.error(e);
+        else rejectReady(e);
+      }
+    })();
+  });
 }
 
 export async function parseExport(file, onProgress) {
