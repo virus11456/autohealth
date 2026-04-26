@@ -271,15 +271,19 @@ export function renderTask1(frame, container) {
   }
   gaps.sort((a, b) => b.days - a.days);
 
-  // Outliers in key recovery metrics — |zscore30| > 3
+  // Outliers in key recovery metrics — |z| > 3. Uses effective z-scores
+  // (cached rolling _zscore30 first, overall fallback when NaN) so sparse
+  // data still surfaces extreme days.
   const outliers = [];
   for (const k of ["resting_hr", "hrv", "sleep_score"]) {
-    const z = `${k}_zscore30`;
-    if (!frame.columns.includes(z)) continue;
-    for (const r of frame.rows) {
-      const zv = r[z];
+    const zArr = effectiveZScores(frame, k, `${k}_zscore30`);
+    for (let i = 0; i < frame.rows.length; i++) {
+      const zv = zArr[i];
       if (Number.isFinite(zv) && Math.abs(zv) > 3) {
-        outliers.push({ date: r.date, key: k, label: labelOf(k), value: r[k], z: zv });
+        outliers.push({
+          date: frame.rows[i].date, key: k, label: labelOf(k),
+          value: frame.rows[i][k], z: zv,
+        });
       }
     }
   }
@@ -463,6 +467,36 @@ function metricCard({ chartId, label, unit, dates, raw, smooth, frameRows, basel
       <div id="${chartId}" class="metric-chart"></div>
       ${hint ? `<div class="metric-hint muted">${hint}</div>` : ""}
     </div>`;
+}
+
+// Compute z-scores against the ENTIRE frame's mean/std. Coarser than the
+// rolling 30-day _zscore30 column but always available so long as the metric
+// has ≥ 3 finite raw values somewhere. Used as a fallback for sparse data.
+// Threshold of 3 (down from 7) means even very limited data — like a user
+// who just got a Series 8 watch — still produces meaningful z-scores.
+function overallZScores(frame, rawKey) {
+  const raw = frame.rows.map((r) => r[rawKey]);
+  let n = 0, sum = 0;
+  for (const v of raw) if (Number.isFinite(v)) { n++; sum += v; }
+  if (n < 3) return raw.map(() => NaN);
+  const mean = sum / n;
+  let ss = 0;
+  for (const v of raw) if (Number.isFinite(v)) ss += (v - mean) * (v - mean);
+  const std = Math.sqrt(n > 1 ? ss / (n - 1) : 1);
+  if (!(std > 0)) return raw.map(() => NaN);
+  return raw.map((v) => Number.isFinite(v) ? (v - mean) / std : NaN);
+}
+
+// Effective z-score column: prefer cached rolling _zscore30, fall back to
+// overall-window z-score when the cached value is NaN. Lets warning-day /
+// fatigue detection see signals that exist in the raw data even when the
+// rolling baseline hasn't formed for that day.
+function effectiveZScores(frame, rawKey, zKey) {
+  const cached = frame.columns.includes(zKey)
+    ? columnValues(frame, zKey)
+    : new Array(frame.rows.length).fill(NaN);
+  const fallback = overallZScores(frame, rawKey);
+  return cached.map((v, i) => Number.isFinite(v) ? v : fallback[i]);
 }
 
 // Plotly hover tooltip styled to match the dashboard's dark theme — by
@@ -668,17 +702,17 @@ export function renderTask2(frame, container) {
   const rhrSm = rollingMean(rhr, 30);
   const walkingSm = rollingMean(walking, 30);
 
-  // z-score series for correlation matrix + fatigue / super-recovery detection
-  const hrvZ = columnValues(frame, "hrv_zscore30");
-  const rhrZ = columnValues(frame, "resting_hr_zscore30");
-  const walkingZ = columnValues(frame, "walking_hr_zscore30");
+  // Effective z-scores: prefer cached rolling _zscore30, fall back to
+  // overall mean/std so sparse data still produces actionable signals.
+  const hrvZ = effectiveZScores(frame, "hrv", "hrv_zscore30");
+  const rhrZ = effectiveZScores(frame, "resting_hr", "resting_hr_zscore30");
+  const walkingZ = effectiveZScores(frame, "walking_hr", "walking_hr_zscore30");
 
   // ---- Today's verdict (computed from latest day where these metrics exist) ----
   const todayIdx = Math.max(lastFiniteIdx(hrv), lastFiniteIdx(rhr), lastFiniteIdx(walking));
-  const tRow = todayIdx >= 0 ? frame.rows[todayIdx] : null;
-  const tHrvZ = tRow?.hrv_zscore30;
-  const tRhrZ = tRow?.resting_hr_zscore30;
-  const tWalkZ = tRow?.walking_hr_zscore30;
+  const tHrvZ = todayIdx >= 0 ? hrvZ[todayIdx] : NaN;
+  const tRhrZ = todayIdx >= 0 ? rhrZ[todayIdx] : NaN;
+  const tWalkZ = todayIdx >= 0 ? walkingZ[todayIdx] : NaN;
   let goodDirs = 0, badDirs = 0;
   if (Number.isFinite(tHrvZ))  { if (tHrvZ > 0.5)  goodDirs++; else if (tHrvZ < -0.5) badDirs++; }
   if (Number.isFinite(tRhrZ))  { if (tRhrZ < -0.5) goodDirs++; else if (tRhrZ > 0.5)  badDirs++; }
@@ -773,8 +807,9 @@ export function renderTask2(frame, container) {
   let badDays = 0, maxConsecutive = 0, curConsecutive = 0;
   let evaluatedDays = 0;
   for (let i = Math.max(0, frame.rows.length - recentLookback); i < frame.rows.length; i++) {
-    const r = frame.rows[i];
-    const hZ = r.hrv_zscore30, rZ = r.resting_hr_zscore30, wZ = r.walking_hr_zscore30;
+    // Use effective z-scores (cached or fallback) so sparse rolling baselines
+    // don't swallow real signal patterns.
+    const hZ = hrvZ[i], rZ = rhrZ[i], wZ = walkingZ[i];
     if (![hZ, rZ, wZ].some(Number.isFinite)) continue;
     evaluatedDays++;
     let bad = 0;
@@ -821,12 +856,12 @@ export function renderTask2(frame, container) {
   const tIdx = lastFiniteIdx(hrv) >= 0 ? lastFiniteIdx(hrv) :
                lastFiniteIdx(rhr) >= 0 ? lastFiniteIdx(rhr) :
                lastFiniteIdx(walking);
-  const tr = tIdx >= 0 ? frame.rows[tIdx] : null;
   const effects = [];
-  if (tr) {
-    const hZ = tr.hrv_zscore30;
-    const rZ = tr.resting_hr_zscore30;
-    const wZ = tr.walking_hr_zscore30;
+  if (tIdx >= 0) {
+    // Same effective fallback chain as the verdict above.
+    const hZ = hrvZ[tIdx];
+    const rZ = rhrZ[tIdx];
+    const wZ = walkingZ[tIdx];
     if (Number.isFinite(hZ)) {
       if (hZ > 0.5) effects.push({ kind: "good", title: "💚 心跳變化（HRV）比平常高",
         body: "身體很放鬆、自我修復狀態好。今天做事、運動、決策都會比較順、情緒也穩定。" });
@@ -1743,20 +1778,10 @@ export function renderTask5(frame, container) {
     }
   }
 }
-// Spec'd readiness components (per the analytical brief). Each component is a
-// scaled z-score-equivalent in roughly [-2, +2]; the final aggregation is
-//   50 + 12.5 * Σ(w_i * c_i) / Σ w_i (over available components)
-// which keeps the score on a 0-100 axis even when some components are missing.
-function readinessComponents(row) {
-  const clip = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-  const out = {};
-  if (Number.isFinite(row.hrv_zscore30)) out.hrv = clip(row.hrv_zscore30, -2, 2);
-  if (Number.isFinite(row.resting_hr_zscore30)) out.rhr = clip(-row.resting_hr_zscore30, -2, 2);
-  if (Number.isFinite(row.sleep_score)) out.sleep = (row.sleep_score - 70) / 15;
-  if (Number.isFinite(row.respiratory_zscore30)) out.resp = clip(-row.respiratory_zscore30, -2, 2);
-  if (Number.isFinite(row.wrist_temp_delta_c_zscore30)) out.temp = clip(-Math.abs(row.wrist_temp_delta_c_zscore30), -2, 0);
-  return out;
-}
+// Spec'd readiness aggregation: 50 + 12.5 * Σ(w_i * c_i) / Σ w_i over
+// available components. The components themselves are computed inline at
+// the call site using effectiveZScores (see renderTask6) — that way the
+// time series chart fills in even when the rolling 30-day baseline is NaN.
 
 const READINESS_WEIGHTS = {
   spec:        { hrv: 0.30, rhr: 0.25, sleep: 0.25, resp: 0.10, temp: 0.10, label: "Brief 規格" },
@@ -1787,7 +1812,7 @@ function aggregateReadiness(components, weights) {
 //   3. nothing → component is genuinely absent
 // Lets today's display show "RHR was 72 bpm three days ago" even when the
 // rolling baseline didn't form for that day (sparse upload, gappy data).
-function readinessComponentsCarryForward(frame, idx, lookback = 14) {
+function readinessComponentsCarryForward(frame, idx, lookback = 30) {
   const clip = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const lookbackStart = Math.max(0, idx - lookback);
 
@@ -1800,23 +1825,23 @@ function readinessComponentsCarryForward(frame, idx, lookback = 14) {
     return null;
   }
 
-  // Fallback: compute z from raw vs the entire frame's mean/std. Coarser
-  // than 30-day rolling but still meaningful, and always available so long
-  // as the metric has ≥ 7 finite raw values somewhere in the dataset.
+  // Fallback: compute z from raw vs the entire frame's mean/std. Threshold
+  // dropped to 3 finite values so users with brand-new Series 8+ data
+  // (only a week or two of wrist_temp) still see a meaningful score.
   function fallbackZ(rawKey) {
     let n = 0, sum = 0;
     for (const r of frame.rows) {
       const x = r[rawKey];
       if (Number.isFinite(x)) { n++; sum += x; }
     }
-    if (n < 7) return null;
+    if (n < 3) return null;
     const mean = sum / n;
     let ss = 0;
     for (const r of frame.rows) {
       const x = r[rawKey];
       if (Number.isFinite(x)) ss += (x - mean) * (x - mean);
     }
-    const std = Math.sqrt(ss / (n - 1));
+    const std = Math.sqrt(n > 1 ? ss / (n - 1) : 1);
     if (!(std > 0)) return null;
     for (let i = idx; i >= lookbackStart; i--) {
       const raw = frame.rows[i][rawKey];
@@ -1893,9 +1918,22 @@ export function renderTask6(frame, container) {
     return;
   }
 
-  // Compute readiness for every row (with all 4 weight schemes ready for sensitivity)
-  const readiness = frame.rows.map((row) => {
-    const c = readinessComponents(row);
+  // Compute readiness for every row using effective z-scores (cached rolling
+  // _zscore30 preferred, falling back to overall mean/std). Means the 365-day
+  // chart fills in even on days where the 30-day baseline didn't form, instead
+  // of going blank.
+  const clip = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const hrvEff  = effectiveZScores(frame, "hrv",                 "hrv_zscore30");
+  const rhrEff  = effectiveZScores(frame, "resting_hr",          "resting_hr_zscore30");
+  const respEff = effectiveZScores(frame, "respiratory",         "respiratory_zscore30");
+  const tempEff = effectiveZScores(frame, "wrist_temp_delta_c",  "wrist_temp_delta_c_zscore30");
+  const readiness = frame.rows.map((row, i) => {
+    const c = {};
+    if (Number.isFinite(hrvEff[i]))   c.hrv   = clip(hrvEff[i], -2, 2);
+    if (Number.isFinite(rhrEff[i]))   c.rhr   = clip(-rhrEff[i], -2, 2);
+    if (Number.isFinite(row.sleep_score)) c.sleep = (row.sleep_score - 70) / 15;
+    if (Number.isFinite(respEff[i]))  c.resp  = clip(-respEff[i], -2, 2);
+    if (Number.isFinite(tempEff[i]))  c.temp  = clip(-Math.abs(tempEff[i]), -2, 0);
     return {
       components: c,
       spec:       aggregateReadiness(c, READINESS_WEIGHTS.spec),
@@ -2028,10 +2066,10 @@ export function renderTask6(frame, container) {
   // + overall-mean fallback) so a metric that's logged in the data but
   // doesn't have a clean 30-day rolling baseline still shows up.
   html += `<h3>🧩 今天分數的拆解</h3>`;
-  html += `<p class="muted">每個項目對今天分數的影響。如果某項最近沒讀到，會用最近 14 天內最後一次的讀數（顯示「N 天前」）。</p>`;
+  html += `<p class="muted">每個項目對今天分數的影響。如果某項最近沒讀到，會用最近 30 天內最後一次的讀數（顯示「N 天前」）。</p>`;
   const compRows = ["hrv", "rhr", "sleep", "resp", "temp"].map((k) => {
     if (!(k in carry.components)) {
-      return [COMPONENT_LABEL[k], "—", "<span class='muted'>最近 14 天沒讀到</span>"];
+      return [COMPONENT_LABEL[k], "—", "<span class='muted'>最近 30 天沒讀到</span>"];
     }
     const c = carry.components[k];
     const contrib = READINESS_WEIGHTS.spec[k] * c;
@@ -2102,9 +2140,12 @@ export function renderTask7(frame, container) {
   // Optional: wrist_temp_delta_c_zscore30 (Apple Watch Series 8+).
   // Without temp we fall back to "呼吸 + 心跳訊號" dual mode instead of
   // "呼吸 + 體溫" — looser but still actionable.
-  const respZ = columnValues(frame, "respiratory_zscore30");
-  const hrvZ = columnValues(frame, "hrv_zscore30");
-  const rhrZ = columnValues(frame, "resting_hr_zscore30");
+  // Effective z-scores: cached rolling _zscore30 if available, else overall
+  // mean/std fallback. Means a user whose 30-day baseline hasn't fully formed
+  // (sparse data, recent device upgrade) still gets warning detection.
+  const respZ = effectiveZScores(frame, "respiratory", "respiratory_zscore30");
+  const hrvZ = effectiveZScores(frame, "hrv", "hrv_zscore30");
+  const rhrZ = effectiveZScores(frame, "resting_hr", "resting_hr_zscore30");
   const hasResp = respZ.some(Number.isFinite);
   const hasHrv = hrvZ.some(Number.isFinite);
   const hasRhr = rhrZ.some(Number.isFinite);
@@ -2113,7 +2154,7 @@ export function renderTask7(frame, container) {
     container.innerHTML = `<h2 class="task-title">🤒 任務 7：生病早警</h2>` +
       callout("warn",
         `<strong>⚠ 缺少呼吸頻率資料</strong><br>` +
-        `這個分頁需要至少呼吸頻率 30 天的 baseline。請確認 Apple Watch 睡眠時有戴。`);
+        `這個分頁需要至少呼吸頻率資料。請確認 Apple Watch 睡眠時有戴。`);
     return;
   }
   if (!hasHrv && !hasRhr) {
@@ -2124,9 +2165,13 @@ export function renderTask7(frame, container) {
     return;
   }
 
-  const hasWristTemp = frame.columns.includes("wrist_temp_delta_c_zscore30") &&
-    columnValues(frame, "wrist_temp_delta_c_zscore30").some(Number.isFinite);
-  const tempZ = hasWristTemp ? columnValues(frame, "wrist_temp_delta_c_zscore30") : null;
+  // Detect wrist_temp via raw column (more reliable than the cached z-score
+  // which can be all-NaN if the rolling baseline didn't form).
+  const hasWristTemp = frame.columns.includes("wrist_temp_delta_c") &&
+    columnValues(frame, "wrist_temp_delta_c").some(Number.isFinite);
+  const tempZ = hasWristTemp
+    ? effectiveZScores(frame, "wrist_temp_delta_c", "wrist_temp_delta_c_zscore30")
+    : null;
   const detectionMode = hasWristTemp ? "temp" : "recovery";
 
   // 1. Warning days
