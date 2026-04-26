@@ -33,10 +33,66 @@ header .subtitle { color: var(--muted); font-size: 0.85rem; }
 main { padding: 24px; max-width: 1400px; margin: 0 auto; }
 
 .card {
-  background: var(--panel); border: 1px solid var(--border);
-  border-radius: 10px; padding: 16px; margin-bottom: 16px;
+  background: linear-gradient(180deg, var(--panel) 0%, color-mix(in srgb, var(--panel) 96%, var(--bg)) 100%);
+  border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px;
+  margin-bottom: 14px;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.02) inset, 0 1px 3px rgba(0,0,0,0.18);
 }
 .card h2 { margin: 0 0 12px 0; font-size: 1.05rem; font-weight: 600; }
+
+/* ---- Vitals bar (persistent above tabs) ---- */
+.vitals-bar { padding: 14px 18px; }
+.vitals-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px;
+}
+.vitals-title { font-size: 0.92rem; font-weight: 600; color: var(--text); }
+.vitals-period { font-size: 0.78rem; }
+.vitals-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+.vital-tile {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex; flex-direction: column;
+  position: relative;
+  transition: border-color .12s, transform .12s;
+}
+.vital-tile::before {
+  content: ""; position: absolute; left: 0; top: 12px; bottom: 12px;
+  width: 3px; border-radius: 0 2px 2px 0; background: var(--accent);
+  opacity: 0.55;
+}
+.vital-tile:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+.vital-label {
+  color: var(--muted); font-size: 0.76rem; line-height: 1.2;
+  padding-left: 6px;
+}
+.vital-value {
+  font-size: 1.5rem; font-weight: 600; margin-top: 4px;
+  font-variant-numeric: tabular-nums; line-height: 1.1;
+  padding-left: 6px;
+}
+.vital-unit {
+  font-size: 0.62em; color: var(--muted); font-weight: 400; margin-left: 3px;
+}
+.vital-tile.empty .vital-value { color: var(--muted); font-weight: 400; }
+.vital-tile.empty::before { background: var(--muted); opacity: 0.3; }
+
+/* Color-coded accent bars per metric — subtle thematic association */
+.vital-tile[data-key="hr"]::before          { background: #ef6b6b; }
+.vital-tile[data-key="resting_hr"]::before  { background: #ef4444; }
+.vital-tile[data-key="spo2"]::before        { background: #38bdf8; }
+.vital-tile[data-key="hrv"]::before         { background: #34c38f; }
+.vital-tile[data-key="sleep_hours"]::before { background: #a78bfa; }
+.vital-tile[data-key="vo2max"]::before      { background: #fb923c; }
+.vital-tile[data-key="respiratory"]::before { background: #22d3ee; }
+.vital-tile[data-key="daylight"]::before    { background: #fbbf24; }
 
 .dropzone {
   border: 2px dashed var(--border); border-radius: 12px; padding: 36px;
@@ -158,16 +214,20 @@ main { padding: 24px; max-width: 1400px; margin: 0 auto; }
 .data-health-inline .task-table { font-size: 0.78rem; }
 
 .tabs {
-  display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px;
-  overflow-x: auto;
+  display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 18px;
+  overflow-x: auto; padding-bottom: 1px;
 }
 .tab {
-  padding: 9px 14px; background: transparent; color: var(--muted); border: none;
+  padding: 10px 14px; background: transparent; color: var(--muted); border: none;
   cursor: pointer; font-size: 0.92rem; border-bottom: 2px solid transparent;
-  white-space: nowrap;
+  white-space: nowrap; transition: color .12s, border-color .12s, background .12s;
+  border-radius: 6px 6px 0 0;
 }
-.tab.active { color: var(--text); border-bottom-color: var(--accent); }
-.tab:hover { color: var(--text); }
+.tab:hover { color: var(--text); background: rgba(255,255,255,0.025); }
+.tab.active {
+  color: var(--text); border-bottom-color: var(--accent);
+  background: rgba(79,140,255,0.08);
+}
 
 .tab-content { display: none; }
 .tab-content.active { display: block; }
@@ -206,9 +266,16 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 button.primary, button.secondary {
   padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 0.9rem;
   border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
+  transition: background .12s, border-color .12s, transform .08s;
 }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.primary {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+  font-weight: 500;
+}
+button.primary:hover { background: color-mix(in srgb, var(--accent) 88%, white); }
+button.secondary:hover { border-color: var(--accent); color: var(--text); }
+button:active { transform: scale(0.98); }
+button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
 .footer-note {
   margin-top: 24px; padding: 14px; color: var(--muted); font-size: 0.82rem;

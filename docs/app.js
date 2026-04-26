@@ -149,6 +149,51 @@ function applyFilter() {
   const end = $("#dateEnd").value;
   const rows = state.frame.rows.filter((r) => r.date >= start && r.date <= end);
   state.filtered = { rows, columns: state.frame.columns, dates: rows.map((r) => r.date) };
+  renderVitalsBar();
+}
+
+const VITALS_ITEMS = [
+  { key: "hr",          label: "平均心率",     unit: "bpm",        digits: 0 },
+  { key: "resting_hr",  label: "平均靜息心率", unit: "bpm",        digits: 0 },
+  { key: "spo2",        label: "平均血氧",     unit: "%",          digits: 1 },
+  { key: "hrv",         label: "平均 HRV",     unit: "ms",         digits: 0 },
+  { key: "sleep_hours", label: "平均睡眠",     unit: "小時",       digits: 1 },
+  { key: "vo2max",      label: "平均心適能",   unit: "ml/kg·min",  digits: 1 },
+  { key: "respiratory", label: "平均呼吸",     unit: "次/分",      digits: 1 },
+  { key: "daylight",    label: "平均日照",     unit: "分鐘",       digits: 0 },
+];
+
+function renderVitalsBar() {
+  const grid = $("#vitalsGrid");
+  const periodEl = $("#vitalsPeriod");
+  if (!grid || !state.filtered) return;
+
+  const rows = state.filtered.rows;
+  if (periodEl) {
+    if (rows.length) {
+      periodEl.textContent = `${rows[0].date} → ${rows[rows.length - 1].date}　·　${rows.length} 天`;
+    } else {
+      periodEl.textContent = "區間無資料";
+    }
+  }
+
+  let html = "";
+  for (const it of VITALS_ITEMS) {
+    let sum = 0, n = 0;
+    for (const r of rows) {
+      const v = r[it.key];
+      if (Number.isFinite(v)) { sum += v; n++; }
+    }
+    const avg = n > 0 ? sum / n : NaN;
+    const isEmpty = !Number.isFinite(avg);
+    const display = isEmpty ? "—" : avg.toFixed(it.digits);
+    html += `
+      <div class="vital-tile${isEmpty ? " empty" : ""}" data-key="${it.key}">
+        <div class="vital-label">${it.label}</div>
+        <div class="vital-value">${display}${isEmpty ? "" : `<span class="vital-unit">${it.unit}</span>`}</div>
+      </div>`;
+  }
+  grid.innerHTML = html;
 }
 
 function setupTabs() {
