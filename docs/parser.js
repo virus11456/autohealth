@@ -271,6 +271,22 @@ export async function parseExport(file, onProgress) {
     progress: 1,
   });
 
+  // Normalize percentage metrics that Apple Health emits as 0-1 fraction.
+  // Different iOS versions / data sources emit either 0-1 (ratio) or 0-100
+  // (percent) under unit="%". If the max value across the export is ≤ 1.5,
+  // it's fraction form — multiply by 100 so display + analysis see a
+  // consistent percent scale (otherwise SpO2 shows up as 0.9 %, which is
+  // anatomically impossible).
+  for (const key of ["spo2", "walking_asymmetry", "double_support", "walking_steadiness"]) {
+    const arr = out.quantities[key];
+    if (!arr || !arr.length) continue;
+    let maxV = -Infinity;
+    for (const r of arr) if (r.value > maxV) maxV = r.value;
+    if (maxV <= 1.5) {
+      for (const r of arr) r.value *= 100;
+    }
+  }
+
   // Drop empty metrics
   for (const k of Object.keys(out.quantities)) {
     if (out.quantities[k].length === 0) delete out.quantities[k];

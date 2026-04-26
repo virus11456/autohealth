@@ -172,6 +172,12 @@ def parse_export(source: str | Path | IO[bytes]) -> dict[str, pd.DataFrame]:
             quantity_rows[spec.key].append((start, end, value, elem.get("sourceName", "")))
         elem.clear()
 
+    # Apple Health emits these percent metrics as either 0-1 fraction or 0-100
+    # percent under unit="%", inconsistently. Normalize to percent: if max
+    # observed value is ≤ 1.5, treat as fraction and scale ×100. Without this
+    # SpO2 ends up displayed as 0.9 % (would imply death) instead of 90 %.
+    percent_keys = {"spo2", "walking_asymmetry", "double_support", "walking_steadiness"}
+
     out: dict[str, pd.DataFrame] = {}
     for spec in SUPPORTED_TYPES:
         rows = quantity_rows[spec.key]
@@ -180,6 +186,8 @@ def parse_export(source: str | Path | IO[bytes]) -> dict[str, pd.DataFrame]:
         df = pd.DataFrame(rows, columns=["start", "end", "value", "source"])
         df["start"] = pd.to_datetime(df["start"], utc=True).dt.tz_convert(None)
         df["end"] = pd.to_datetime(df["end"], utc=True).dt.tz_convert(None)
+        if spec.key in percent_keys and not df.empty and df["value"].max() <= 1.5:
+            df["value"] = df["value"] * 100.0
         out[spec.key] = df.sort_values("start").reset_index(drop=True)
 
     if sleep_rows:

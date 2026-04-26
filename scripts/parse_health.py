@@ -202,6 +202,18 @@ def build_dataframe(db_path: Path) -> pd.DataFrame:
 
     df = pd.concat(frames, axis=1) if frames else pd.DataFrame()
 
+    # Apple Health emits these percent metrics as either 0-1 fraction or 0-100
+    # percent under unit="%", inconsistently across iOS versions / sources.
+    # Normalize to percent: if the column's max value is ≤ 1.5, treat as
+    # fraction and scale ×100. Without this SpO2 looks like 0.9 % (impossible).
+    percent_cols = ["spo2_mean", "walking_asymmetry_pct",
+                    "double_support_pct", "walking_steadiness"]
+    for col in percent_cols:
+        if col in df.columns:
+            max_v = df[col].max()
+            if pd.notna(max_v) and max_v <= 1.5:
+                df[col] = df[col] * 100.0
+
     # ----- 心率衍生 (min / max / std / 樣本數) -----
     hr_df = pd.read_sql(
         f"""
