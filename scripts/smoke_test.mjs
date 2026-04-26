@@ -33,11 +33,20 @@ const parsed = await parseExport(file);
 const t1 = Date.now();
 
 console.log(`parsed in ${t1 - t0} ms`);
-console.log("metric counts:");
-for (const k of Object.keys(parsed.quantities)) {
-  console.log(`  ${k.padEnd(14)} ${parsed.quantities[k].length}`);
+console.log(`record count: ${parsed.recordCount}`);
+console.log(`days with data: ${parsed.dailyAggs.size}`);
+console.log("per-metric record counts:");
+const perMetric = {};
+for (const dayMap of parsed.dailyAggs.values()) {
+  for (const [mKey, acc] of dayMap) {
+    perMetric[mKey] = (perMetric[mKey] || 0) + acc.count;
+  }
 }
-console.log(`  sleep          ${parsed.sleep.length}`);
+for (const [k, n] of Object.entries(perMetric).sort()) {
+  console.log(`  ${k.padEnd(20)} ${n}`);
+}
+console.log(`  sleep                ${parsed.sleep.length}`);
+console.log(`  spo2Raw              ${parsed.spo2Raw.length}`);
 
 const frame = buildDailyFrame(parsed);
 console.log(`\ndaily frame: ${frame.rows.length} days x ${frame.columns.length} cols`);

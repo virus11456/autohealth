@@ -1,4 +1,4 @@
-// Roll per-record arrays into a daily frame.
+// Build the daily wide frame from the streaming-aggregated parser output.
 import { SUPPORTED_METRICS } from "./parser.js";
 
 // Metrics that get a 30-day rolling baseline + z-score column. Phase 3
@@ -25,51 +25,14 @@ function* daysBetween(start, end) {
   }
 }
 
-function aggregate(records, mode) {
-  const buckets = new Map();
-  for (const r of records) {
-    const k = dateKey(r.start);
-    let b = buckets.get(k);
-    if (!b) { b = { sum: 0, count: 0, min: Infinity, max: -Infinity }; buckets.set(k, b); }
-    b.sum += r.value;
-    b.count++;
-    if (r.value < b.min) b.min = r.value;
-    if (r.value > b.max) b.max = r.value;
-  }
-  const out = new Map();
-  for (const [k, b] of buckets) {
-    let v;
-    if (mode === "sum")  v = b.sum;
-    else if (mode === "min")  v = b.min;
-    else if (mode === "max")  v = b.max;
-    else                       v = b.sum / b.count;
-    out.set(k, v);
-  }
-  return out;
-}
-
-// Per-day min / max / std / sample-count for raw heart-rate records. Mean is
-// already computed via the standard 'hr' rollup.
-function hrDerivedDaily(records) {
-  const buckets = new Map();
-  for (const r of records) {
-    const k = dateKey(r.start);
-    let b = buckets.get(k);
-    if (!b) { b = { vals: [] }; buckets.set(k, b); }
-    b.vals.push(r.value);
-  }
-  const min = new Map(), max = new Map(), std = new Map(), n = new Map();
-  for (const [k, b] of buckets) {
-    const arr = b.vals;
-    let lo = Infinity, hi = -Infinity, sum = 0;
-    for (const v of arr) { if (v < lo) lo = v; if (v > hi) hi = v; sum += v; }
-    const mean = sum / arr.length;
-    let ss = 0;
-    for (const v of arr) ss += (v - mean) * (v - mean);
-    const sd = arr.length > 1 ? Math.sqrt(ss / (arr.length - 1)) : 0;
-    min.set(k, lo); max.set(k, hi); std.set(k, sd); n.set(k, arr.length);
-  }
-  return { heart_rate_min: min, heart_rate_max: max, heart_rate_std: std, heart_rate_samples: n };
+// Reduce a streaming accumulator { sum, count, min, max, sumSq } to a single
+// scalar per the spec's aggregation mode.
+function finalizeAcc(acc, mode) {
+  if (!acc || acc.count === 0) return undefined;
+  if (mode === "sum") return acc.sum;
+  if (mode === "min") return acc.min;
+  if (mode === "max") return acc.max;
+  return acc.sum / acc.count;  // mean (default)
 }
 
 const ASLEEP_STAGES = new Set(["Asleep", "AsleepCore", "AsleepDeep", "AsleepREM", "AsleepUnspecified"]);
@@ -187,24 +150,52 @@ function attachBaselines(rows, columns, baselineCols, window = 30, minPeriods = 
 }
 
 export function buildDailyFrame(parsed) {
+  // parsed.dailyAggs: Map<dateKey, Map<metricKey, {sum,count,min,max,sumSq}>>
+  // parsed.sleep:     [{ start, end, stage, source }]
+  // parsed.spo2Raw:   [{ start, value }]
   const cols = new Map(); // colKey -> Map<dateKey, value>
   const allDates = new Set();
+  const dailyAggs = parsed.dailyAggs || new Map();
 
+  // Walk the per-day accumulators and finalize each metric per its agg mode.
+  // Same observable result as the old "iterate raw records, aggregate" pass,
+  // but without ever holding the raw record arrays in memory.
+  const presentMetrics = new Set();
+  for (const [dKey, dayMap] of dailyAggs) {
+    for (const mKey of dayMap.keys()) presentMetrics.add(mKey);
+    allDates.add(dKey);
+  }
   for (const spec of SUPPORTED_METRICS) {
-    const records = parsed.quantities?.[spec.key];
-    if (!records || !records.length) continue;
-    const m = aggregate(records, spec.agg);
-    cols.set(spec.key, m);
-    for (const k of m.keys()) allDates.add(k);
+    if (!presentMetrics.has(spec.key)) continue;
+    const m = new Map();
+    for (const [dKey, dayMap] of dailyAggs) {
+      const acc = dayMap.get(spec.key);
+      const v = finalizeAcc(acc, spec.agg);
+      if (v !== undefined) m.set(dKey, v);
+    }
+    if (m.size) cols.set(spec.key, m);
   }
 
-  // HR derivations (min / max / std / samples) from raw HR records
-  if (parsed.quantities?.hr && parsed.quantities.hr.length) {
-    const hrx = hrDerivedDaily(parsed.quantities.hr);
-    for (const [name, m] of Object.entries(hrx)) {
-      cols.set(name, m);
-      for (const k of m.keys()) allDates.add(k);
+  // HR derivations: min / max / std / samples come straight from the HR
+  // accumulator (count, min, max, sumSq are already there from streaming).
+  if (presentMetrics.has("hr")) {
+    const minM = new Map(), maxM = new Map(), stdM = new Map(), nM = new Map();
+    for (const [dKey, dayMap] of dailyAggs) {
+      const acc = dayMap.get("hr");
+      if (!acc || acc.count === 0) continue;
+      const mean = acc.sum / acc.count;
+      const variance = acc.count > 1
+        ? Math.max(0, (acc.sumSq - acc.count * mean * mean) / (acc.count - 1))
+        : 0;
+      minM.set(dKey, acc.min);
+      maxM.set(dKey, acc.max);
+      stdM.set(dKey, Math.sqrt(variance));
+      nM.set(dKey, acc.count);
     }
+    cols.set("heart_rate_min", minM);
+    cols.set("heart_rate_max", maxM);
+    cols.set("heart_rate_std", stdM);
+    cols.set("heart_rate_samples", nM);
   }
 
   if (parsed.sleep && parsed.sleep.length) {
@@ -236,8 +227,10 @@ export function buildDailyFrame(parsed) {
     cols.set("bedtime_hour", bedHr);
     cols.set("sleep_score", score);
 
-    if (parsed.quantities?.spo2) {
-      const sm = spo2DuringSleep(parsed.quantities.spo2, parsed.sleep);
+    // SpO2 sleep min: uses spo2Raw (kept full from streaming, small set) and
+    // the sleep windows. Interval join — see spo2DuringSleep below.
+    if (parsed.spo2Raw && parsed.spo2Raw.length) {
+      const sm = spo2DuringSleep(parsed.spo2Raw, parsed.sleep);
       if (sm.size) {
         cols.set("spo2_sleep_min", sm);
         for (const k of sm.keys()) allDates.add(k);

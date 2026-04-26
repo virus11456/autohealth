@@ -209,22 +209,55 @@ async function getXmlStream(file, onProgress) {
   });
 }
 
+// Date key from a Date in local time (YYYY-MM-DD). Mirrors the helper in
+// aggregator.js — used to bucket records into per-day accumulators during
+// the streaming-aggregate parse.
+function dateKey(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+const PERCENT_KEYS = ["spo2", "walking_asymmetry", "double_support", "walking_steadiness"];
+
+// Streaming-aggregate parser. Instead of accumulating every <Record> into
+// arrays and aggregating after parse (which can hit ~100 MB+ for heavy users
+// and crash iOS Safari), update a per-day accumulator immediately and throw
+// the raw record away. Memory stays in the low MB range regardless of input
+// size.
+//
+// Returns: {
+//   dailyAggs:  Map<dateKey, Map<metricKey, { sum, count, min, max, sumSq }>>
+//   sleep:      [{ start, end, stage, source }]   // kept full — small set
+//   spo2Raw:    [{ start, value }]                // kept full for sleep-min interval join
+//   percentMax: { spo2: number, walking_asymmetry: ..., ... }  // for fraction-form detection
+//   recordCount: number
+// }
 export async function parseExport(file, onProgress) {
-  const out = {
-    quantities: Object.fromEntries(SUPPORTED.map((m) => [m.key, []])),
-    sleep: [],
-  };
+  const dailyAggs = new Map();
+  const sleep = [];
+  const spo2Raw = [];
+  const percentMax = Object.fromEntries(PERCENT_KEYS.map((k) => [k, -Infinity]));
+
+  function getAcc(dKey, mKey) {
+    let dayMap = dailyAggs.get(dKey);
+    if (!dayMap) { dayMap = new Map(); dailyAggs.set(dKey, dayMap); }
+    let acc = dayMap.get(mKey);
+    if (!acc) {
+      acc = { sum: 0, count: 0, min: Infinity, max: -Infinity, sumSq: 0 };
+      dayMap.set(mKey, acc);
+    }
+    return acc;
+  }
 
   const { stream, totalBytes } = await getXmlStream(file, onProgress);
   let bytesSeen = 0;
-  let lineCount = 0;
   let recordCount = 0;
   let lastTick = 0;
 
   for await (const line of streamLines(stream)) {
     bytesSeen += line.length + 1;
-    lineCount++;
-    // Throttle progress updates to ~10/sec
     const now = Date.now();
     if (onProgress && now - lastTick > 100) {
       lastTick = now;
@@ -234,7 +267,6 @@ export async function parseExport(file, onProgress) {
         progress: totalBytes ? bytesSeen / totalBytes : null,
       });
     }
-    // Quick pre-filter to skip lines without <Record
     if (line.indexOf("<Record") === -1) continue;
     RECORD_RE.lastIndex = 0;
     let m;
@@ -245,25 +277,65 @@ export async function parseExport(file, onProgress) {
       const start = parseAppleDate(attrs.startDate);
       const end = parseAppleDate(attrs.endDate);
       if (!start || !end) continue;
+
       if (t === SLEEP_HK) {
         const stage = (attrs.value || "").replace("HKCategoryValueSleepAnalysis", "");
-        out.sleep.push({ start, end, stage, source: attrs.sourceName || "" });
+        sleep.push({ start, end, stage, source: attrs.sourceName || "" });
         recordCount++;
         continue;
       }
+
       const spec = HK_INDEX[t];
       if (!spec) continue;
       const v = parseFloat(attrs.value);
       if (!Number.isFinite(v)) continue;
+
       let value = v;
       if (spec.key === "distance") {
         const u = (attrs.unit || "").toLowerCase();
         if (u === "m" || u === "meter" || u === "metre") value = v / 1000;
       }
-      out.quantities[spec.key].push({ start, end, value, source: attrs.sourceName || "" });
+
+      // SpO2 raw kept for sleep-window interval join after parse.
+      if (spec.key === "spo2") spo2Raw.push({ start, value });
+
+      // Track max for fraction-form percent metrics — used to decide
+      // whether to scale ×100 at finalize.
+      if (spec.key in percentMax && value > percentMax[spec.key]) {
+        percentMax[spec.key] = value;
+      }
+
+      // Fold into per-day accumulator and discard the raw record.
+      const dKey = dateKey(start);
+      const acc = getAcc(dKey, spec.key);
+      acc.sum += value;
+      acc.count++;
+      if (value < acc.min) acc.min = value;
+      if (value > acc.max) acc.max = value;
+      acc.sumSq += value * value;
+
       recordCount++;
     }
   }
+
+  // Apply fraction → percent normalization to accumulators in-place.
+  // Linear scaling: multiply sum, sumSq scales as ×10000, min/max ×100.
+  for (const key of PERCENT_KEYS) {
+    const maxV = percentMax[key];
+    if (!Number.isFinite(maxV) || maxV > 1.5) continue;
+    for (const dayMap of dailyAggs.values()) {
+      const acc = dayMap.get(key);
+      if (!acc) continue;
+      acc.sum *= 100;
+      acc.sumSq *= 10000;
+      acc.min *= 100;
+      acc.max *= 100;
+    }
+    if (key === "spo2") for (const r of spo2Raw) r.value *= 100;
+  }
+
+  sleep.sort((a, b) => a.start - b.start);
+  spo2Raw.sort((a, b) => a.start - b.start);
 
   onProgress && onProgress({
     phase: "done",
@@ -271,27 +343,5 @@ export async function parseExport(file, onProgress) {
     progress: 1,
   });
 
-  // Normalize percentage metrics that Apple Health emits as 0-1 fraction.
-  // Different iOS versions / data sources emit either 0-1 (ratio) or 0-100
-  // (percent) under unit="%". If the max value across the export is ≤ 1.5,
-  // it's fraction form — multiply by 100 so display + analysis see a
-  // consistent percent scale (otherwise SpO2 shows up as 0.9 %, which is
-  // anatomically impossible).
-  for (const key of ["spo2", "walking_asymmetry", "double_support", "walking_steadiness"]) {
-    const arr = out.quantities[key];
-    if (!arr || !arr.length) continue;
-    let maxV = -Infinity;
-    for (const r of arr) if (r.value > maxV) maxV = r.value;
-    if (maxV <= 1.5) {
-      for (const r of arr) r.value *= 100;
-    }
-  }
-
-  // Drop empty metrics
-  for (const k of Object.keys(out.quantities)) {
-    if (out.quantities[k].length === 0) delete out.quantities[k];
-    else out.quantities[k].sort((a, b) => a.start - b.start);
-  }
-  out.sleep.sort((a, b) => a.start - b.start);
-  return out;
+  return { dailyAggs, sleep, spo2Raw, percentMax, recordCount };
 }
