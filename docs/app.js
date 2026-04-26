@@ -6,6 +6,11 @@ import {
   DRIVERS_DEFAULT, RESPONSES_DEFAULT,
   computeReadiness, computeEnvStress,
 } from "./analyzer.js";
+import {
+  getSettings, setSettings, clearSettings, isConfigured,
+  testConnection, callMinimax,
+  buildCompactSummaryPrompt, buildDeepAnalysisPrompt,
+} from "./ai.js";
 
 const state = {
   parsed: null,
@@ -110,6 +115,7 @@ function initDashboard() {
   setupTabs();
   setupTrendPicker();
   setupLagPicker();
+  setupAiTab();
   renderAll();
 }
 
@@ -482,6 +488,185 @@ function downloadCsv() {
   URL.revokeObjectURL(url);
 }
 
+// ---------------- AI tab + settings modal --------------------------------
+
+function setupSettingsModal() {
+  const modal = $("#settingsModal");
+  const open = () => {
+    const s = getSettings();
+    $("#cfgToken").value = s.token;
+    $("#cfgBaseUrl").value = s.baseUrl;
+    $("#cfgModel").value = s.model;
+    $("#cfgGroupId").value = s.groupId;
+    $("#cfgTestResult").classList.remove("show", "ok", "fail");
+    modal.style.display = "flex";
+  };
+  const close = () => { modal.style.display = "none"; };
+
+  $("#openSettings").addEventListener("click", open);
+  $("#closeSettings").addEventListener("click", close);
+  modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
+
+  $("#cfgSave").addEventListener("click", () => {
+    setSettings({
+      token: $("#cfgToken").value,
+      baseUrl: $("#cfgBaseUrl").value,
+      model: $("#cfgModel").value,
+      groupId: $("#cfgGroupId").value,
+    });
+    close();
+    refreshAiStatus();
+  });
+
+  $("#cfgClear").addEventListener("click", () => {
+    if (!confirm("確定清除 token？localStorage 會被刪掉。")) return;
+    clearSettings();
+    $("#cfgToken").value = "";
+    $("#cfgGroupId").value = "";
+    refreshAiStatus();
+  });
+
+  $("#cfgTest").addEventListener("click", async () => {
+    // Test using the values currently in the form, not the saved ones
+    const live = {
+      token: $("#cfgToken").value.trim(),
+      baseUrl: $("#cfgBaseUrl").value.trim() || "https://api.minimaxi.com/v1",
+      model: $("#cfgModel").value.trim() || "MiniMax-M2.7",
+      groupId: $("#cfgGroupId").value.trim(),
+    };
+    const result = $("#cfgTestResult");
+    result.classList.remove("ok", "fail");
+    result.classList.add("show");
+    result.textContent = "測試中…";
+    try {
+      const r = await testConnection(live);
+      result.textContent = r.message;
+      result.classList.add(r.ok ? "ok" : "fail");
+    } catch (e) {
+      result.textContent = `❌ 例外：${e.message}`;
+      result.classList.add("fail");
+    }
+  });
+}
+
+function refreshAiStatus() {
+  const el = $("#aiStatus");
+  if (!el) return;
+  if (!isConfigured()) {
+    el.className = "ai-status warn";
+    el.innerHTML = "尚未設定 MiniMax token。點右上角 ⚙ 貼上 token + endpoint 後再回來。";
+    return;
+  }
+  const s = getSettings();
+  el.className = "ai-status";
+  el.innerHTML = `已設定：<code>${s.model}</code> @ <code>${s.baseUrl}</code>${s.groupId ? ` · GroupId: <code>${s.groupId}</code>` : ""}`;
+}
+
+// Tiny markdown → HTML. Handles headings (#/##/###), bold, italic, inline code,
+// fenced code blocks, unordered lists, blockquote, paragraphs. Enough for what
+// the LLM produces in our prompts; if more is needed we can swap in marked.js.
+function renderMarkdown(md) {
+  // 1. extract fenced code blocks first so we don't munge their contents
+  const codeBlocks = [];
+  md = md.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    codeBlocks.push(`<pre><code>${escapeHtml(code)}</code></pre>`);
+    return ` CODE${codeBlocks.length - 1} `;
+  });
+  // 2. escape inline HTML in the rest
+  md = escapeHtml(md);
+  // 3. headings
+  md = md.replace(/^### (.+)$/gm, "<h3>$1</h3>");
+  md = md.replace(/^## (.+)$/gm, "<h2>$1</h2>");
+  md = md.replace(/^# (.+)$/gm, "<h1>$1</h1>");
+  // 4. blockquote
+  md = md.replace(/^&gt; (.+)$/gm, "<blockquote>$1</blockquote>");
+  // 5. inline emphasis & code (after escape so &lt; is safe)
+  md = md.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  md = md.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+  md = md.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+  // 6. unordered list — collect consecutive `- ` lines
+  md = md.replace(/(?:^- .+(?:\n|$))+/gm, (m) => {
+    const items = m.trim().split("\n").map(l => `<li>${l.replace(/^- /, "")}</li>`).join("");
+    return `<ul>${items}</ul>`;
+  });
+  // 7. paragraphs — wrap blank-line-separated runs of text that aren't already block elements
+  md = md.split(/\n{2,}/).map(block => {
+    if (/^\s*<(h\d|ul|ol|pre|blockquote)/.test(block)) return block;
+    if (/^\s* CODE\d+ \s*$/.test(block)) return block;
+    if (!block.trim()) return "";
+    return `<p>${block.replace(/\n/g, "<br>")}</p>`;
+  }).join("\n");
+  // 8. restore code blocks
+  md = md.replace(/ CODE(\d+) /g, (_, i) => codeBlocks[Number(i)]);
+  return md;
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[c]);
+}
+
+function setAiOutput(html) {
+  const el = $("#aiOutput");
+  el.innerHTML = html;
+}
+
+function setAiBusy(msg) {
+  const status = $("#aiStatus");
+  status.className = "ai-status busy";
+  status.textContent = msg;
+}
+
+function setAiError(msg) {
+  const status = $("#aiStatus");
+  status.className = "ai-status error";
+  status.textContent = msg;
+}
+
+async function runAi(mode) {
+  if (!state.filtered) return;
+  if (!isConfigured()) {
+    setAiError("尚未設定 token，先點右上角 ⚙。");
+    return;
+  }
+  const builder = mode === "deep" ? buildDeepAnalysisPrompt : buildCompactSummaryPrompt;
+  const { system, user } = builder(state.filtered);
+  const maxTokens = mode === "deep" ? 8000 : 1500;
+
+  const t0 = Date.now();
+  setAiBusy(mode === "deep" ? "深度分析中（5-30 秒）…" : "AI 摘要中…");
+  setAiOutput("");
+  try {
+    const { content } = await callMinimax(system, user, { maxTokens });
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+    setAiOutput(
+      renderMarkdown(content) +
+      `<div class="ai-meta">${mode === "deep" ? "深度分析" : "輕量摘要"} · ${elapsed}s · ${content.length.toLocaleString()} 字</div>`
+    );
+    refreshAiStatus();
+  } catch (e) {
+    setAiError(`失敗：${e.message}`);
+  }
+}
+
+function previewPrompt() {
+  if (!state.filtered) return;
+  const { system, user } = buildCompactSummaryPrompt(state.filtered);
+  const html = `<h3>System</h3><pre><code>${escapeHtml(system)}</code></pre>` +
+               `<h3>User</h3><pre><code>${escapeHtml(user)}</code></pre>` +
+               `<div class="ai-meta">這是「輕量摘要」會送出的內容。深度分析的 prompt 會更大（含完整分析期間 CSV）。</div>`;
+  setAiOutput(html);
+}
+
+function setupAiTab() {
+  refreshAiStatus();
+  $("#aiSummaryBtn").addEventListener("click", () => runAi("compact"));
+  $("#aiDeepBtn").addEventListener("click", () => runAi("deep"));
+  $("#aiPreviewBtn").addEventListener("click", previewPrompt);
+}
+
 // ---------------- boot ----------------------------------------------------
 
 setupDropzone();
+setupSettingsModal();

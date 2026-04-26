@@ -6,6 +6,8 @@ Upload your Apple Health export.zip (匯出於 健康 App > 個人頭像 > 匯�
 from __future__ import annotations
 
 import io
+import json
+import urllib.request
 from datetime import timedelta
 from pathlib import Path
 
@@ -62,6 +64,31 @@ st.sidebar.markdown(
     "3. 在下方上傳即可"
 )
 uploaded = st.sidebar.file_uploader("上傳 export.zip 或 export.xml", type=["zip", "xml"])
+
+# ------------------------- sidebar / AI settings --------------------------
+# Token only persists for the current Streamlit session — st.session_state is
+# in-memory and dies when the server restarts. Never written to disk.
+st.sidebar.markdown("---")
+with st.sidebar.expander("🤖 AI 解讀設定（選用）", expanded=False):
+    st.caption(
+        "Token 只存在這個 Streamlit session 的記憶體裡，不會寫進磁碟、不會進 git。"
+        "啟用後，分析期間的寬表會送到你選的 LLM 服務商。"
+    )
+    if "ai" not in st.session_state:
+        st.session_state.ai = {
+            "token": "",
+            "base_url": "https://api.minimaxi.com/v1",
+            "model": "MiniMax-M2.7",
+            "group_id": "",
+        }
+    cfg = st.session_state.ai
+    cfg["token"] = st.text_input("API Token", value=cfg["token"], type="password",
+                                 help="sk-xxx-... ；只在記憶體存活")
+    cfg["base_url"] = st.text_input("Endpoint base URL", value=cfg["base_url"],
+                                    help="CN: api.minimaxi.com  ·  國際: api.minimax.io")
+    cfg["model"] = st.text_input("Model id", value=cfg["model"],
+                                 help="高速版填 MiniMax-M2.7-highspeed")
+    cfg["group_id"] = st.text_input("GroupId（CN 部分帳號需要）", value=cfg["group_id"])
 
 if "per_metric" not in st.session_state:
     st.session_state.per_metric = None
@@ -203,8 +230,8 @@ with k5: _kpi("步數", "steps", "{:.0f}")
 with k6: _kpi("日照", "daylight", "{:.0f}", " 分")
 
 # ------------------------- tabs -------------------------
-tab_insight, tab_trend, tab_corr, tab_lag, tab_anom, tab_data = st.tabs(
-    ["🤖 自動洞察", "📈 趨勢", "🔗 相關矩陣", "⏱ 延遲相關", "⚠ 異常天", "🧾 原始每日表"]
+tab_insight, tab_trend, tab_corr, tab_lag, tab_anom, tab_data, tab_ai = st.tabs(
+    ["🤖 自動洞察", "📈 趨勢", "🔗 相關矩陣", "⏱ 延遲相關", "⚠ 異常天", "🧾 原始每日表", "✨ AI 解讀"]
 )
 
 # ---- insights ----
@@ -369,5 +396,216 @@ with tab_data:
         file_name="autohealth_daily.csv",
         mime="text/csv",
     )
+
+# ---- AI 解讀 ----
+# Same column-name canonicalisation as docs/ai.js so prompts referencing
+# `hrv_sdnn_ms` work regardless of which side parsed the export.
+_LLM_NAME_MAP = {
+    "hr": "heart_rate_mean", "hrv": "hrv_sdnn_ms", "spo2": "spo2_mean",
+    "respiratory": "respiratory_rate", "flights": "flights_climbed",
+    "distance": "distance_km", "active_energy": "active_kcal",
+    "walking_hr": "walking_hr_avg", "vo2max": "vo2_max",
+    "walking_asymmetry": "walking_asymmetry_pct",
+    "double_support": "double_support_pct",
+    "daylight": "daylight_minutes",
+    "sleep_hours": "sleep_total_h",
+}
+
+
+def _canonicalise(col: str) -> str:
+    if col in _LLM_NAME_MAP:
+        return _LLM_NAME_MAP[col]
+    for short, canon in _LLM_NAME_MAP.items():
+        if col == f"{short}_baseline30":
+            return f"{canon}_baseline30"
+        if col == f"{short}_zscore30":
+            return f"{canon}_zscore30"
+    return col
+
+
+def _build_csv(df_window: pd.DataFrame) -> str:
+    keep = [c for c in df_window.columns
+            if c not in ("sleep_start", "sleep_end", "sleep_minutes")
+            and df_window[c].notna().any()]
+    out = df_window[keep].copy()
+    out.columns = [_canonicalise(c) for c in out.columns]
+    out = out.round(2)
+    return out.to_csv(index=True)
+
+
+_COMPACT_SYSTEM = """你是 Apple Health 數據分析師。我會提供使用者最近的每日寬表 (CSV)，
+請輸出**繁體中文** markdown，包含三段：
+
+## 狀態總結
+2-3 句：最近一週身體狀態總體如何，跟前 3 週比有什麼明顯變化。
+
+## 異常解讀
+2-4 句：列出最值得注意的異常或趨勢轉折，並用白話說明可能的生理意義。
+
+## 行動建議
+2-3 條 bullet：基於以上，建議今天 / 本週可調整的具體事項。
+
+務必：
+- 簡潔、數字導向（例：「HRV 比基線低 1.4σ」），避免恐嚇式語言
+- 樣本不足以下結論時明說「資料不足」
+- 結尾固定加：「⚠ 此為數據觀察，不構成醫療診斷；持續異常請就醫。」"""
+
+
+_DEEP_SYSTEM = """你是 Apple Health 跨維度分析師。我會提供使用者完整分析期間的每日寬表
+（含 30 天 baseline + z-score 衍生欄位）。請依下面 7 個任務逐項輸出
+**繁體中文** markdown 報告：
+
+## 任務 1：資料健檢
+- 列每個指標的非空天數 / 涵蓋率 / 資料起訖
+- 識別資料密度斷層（連續 ≥ 7 天空值）
+- 列出 |zscore30| > 3 的離群值日期（resting_hr / hrv_sdnn_ms / sleep_score）
+- 建議「分析黃金窗口」
+
+## 任務 2：核心 Readiness 三角（HRV × resting_hr × walking_hr_avg）
+- 三者趨勢與相關性
+- 識別「典型疲勞日」（HRV z<-1, RHR z>+1, walking_HR z>+1）
+- 識別「典型超恢復日」（HRV z>+1, RHR z<-1）
+- **結論**一句話
+
+## 任務 3：睡眠 → 隔日恢復
+- lag 1 天 sleep_* × 今天 hrv / RHR
+- 比較 A 總時長 / B 深睡 / C 深睡+REM 比
+- **結論**：哪個面向最值得優化
+
+## 任務 4：步態力學
+- walking_asymmetry / double_support / walking_speed / step_length 趨勢
+- 識別「步態異常週」
+- gait_efficiency = walking_speed_mps / walking_hr_avg
+- 高步數 vs 低步數日步態差
+
+## 任務 5：環境與生理節律
+- 日照分箱 → 當晚睡眠分數
+- 月度 bedtime_hour 標準差
+- 日照不足連續 ≥ 3 天 → 後續 HRV
+- 假日 vs 平日
+
+## 任務 6：Readiness Score 解讀
+- 紅燈（<40）+ 綠燈（>75）日期分佈
+- 最近 7 天主要驅動因素
+
+## 任務 7：生病早警
+- 警戒日（resp_z>+1 AND wrist_temp_z>+1）
+- 警戒日後 7 天是否進展為發病
+- 對歷史事件的敏感度
+
+最後輸出 **INSIGHTS** 區塊：3-5 條最值得行動的整合建議。
+
+務必：每個任務最後一行給「**結論**」一句話；資料不足明說；
+結尾固定加：「⚠ 此為數據觀察，不構成醫療診斷；持續異常請就醫。」"""
+
+
+def _call_minimax(system: str, user: str, max_tokens: int = 2000, timeout: int = 120) -> str:
+    cfg = st.session_state.ai
+    if not cfg.get("token"):
+        raise RuntimeError("尚未填入 token，請到左側展開「🤖 AI 解讀設定」貼上")
+    url = cfg["base_url"].rstrip("/") + "/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {cfg['token']}",
+        "Content-Type": "application/json",
+    }
+    if cfg.get("group_id"):
+        headers["GroupId"] = cfg["group_id"]
+    body = {
+        "model": cfg["model"],
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "max_tokens": max_tokens,
+        "temperature": 0.3,
+    }
+    req = urllib.request.Request(
+        url, data=json.dumps(body).encode("utf-8"), headers=headers, method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read())
+    content = data.get("choices", [{}])[0].get("message", {}).get("content")
+    if not content:
+        raise RuntimeError(f"回應格式異常：{json.dumps(data)[:500]}")
+    return content
+
+
+with tab_ai:
+    cfg = st.session_state.ai
+    if not cfg.get("token"):
+        st.warning("尚未設定 token。請到左側 **🤖 AI 解讀設定** 貼上 token 與 endpoint。")
+    else:
+        st.caption(f"目前設定：`{cfg['model']}` @ `{cfg['base_url']}`"
+                   + (f" · GroupId: `{cfg['group_id']}`" if cfg["group_id"] else ""))
+
+    col_a, col_b, col_c = st.columns([1, 1, 1])
+    with col_a:
+        do_summary = st.button("✨ 每日輕量摘要", use_container_width=True,
+                               help="一次 LLM call，回 3 段")
+    with col_b:
+        do_deep = st.button("🔬 深度分析（7 任務）", use_container_width=True,
+                            help="把分析期間完整寬表丟給 LLM，輸出 7 任務 markdown 報告")
+    with col_c:
+        do_preview = st.button("👁 預覽 prompt", use_container_width=True,
+                               help="不送出，只顯示要送什麼")
+
+    if do_preview:
+        recent = df.tail(30)
+        csv = _build_csv(recent)
+        last = df.iloc[-1] if not df.empty else None
+        header_lines = []
+        if last is not None and pd.notna(last.get("readiness")):
+            header_lines.append(f"今日 Readiness：{last['readiness']:.0f} / 100")
+        if last is not None and pd.notna(last.get("env_stress")):
+            header_lines.append(f"今日 Environment Stress：{last['env_stress']:.0f} / 100")
+        user_msg = (
+            f"以下是最近 {len(recent)} 天的健康資料寬表（CSV）：\n\n```csv\n{csv}\n```\n\n"
+            + ("**今日狀態快照**\n" + "\n".join(header_lines) + "\n\n" if header_lines else "")
+            + "請依系統指示輸出三段分析。"
+        )
+        st.markdown("**System prompt**")
+        st.code(_COMPACT_SYSTEM, language="markdown")
+        st.markdown("**User prompt**")
+        st.code(user_msg, language="markdown")
+        st.caption("這是「輕量摘要」會送出的內容。深度分析的 prompt 會更大（含完整分析期間）。")
+
+    if do_summary or do_deep:
+        if not cfg.get("token"):
+            st.error("尚未設定 token，請到左側展開「🤖 AI 解讀設定」貼上")
+        else:
+            mode = "deep" if do_deep else "compact"
+            window = df if do_deep else df.tail(30)
+            csv = _build_csv(window)
+            last = df.iloc[-1] if not df.empty else None
+            header_lines = []
+            if last is not None and pd.notna(last.get("readiness")):
+                header_lines.append(f"今日 Readiness：{last['readiness']:.0f} / 100")
+            if last is not None and pd.notna(last.get("env_stress")):
+                header_lines.append(f"今日 Environment Stress：{last['env_stress']:.0f} / 100")
+            header_block = ("**今日狀態快照**\n" + "\n".join(header_lines) + "\n\n") if header_lines else ""
+            if mode == "deep":
+                user_msg = (
+                    f"以下是分析期間 {len(window)} 天的完整每日寬表（含 30 天 baseline + z-score）：\n\n"
+                    f"```csv\n{csv}\n```\n\n{header_block}"
+                    "請依系統指示輸出 7 個任務的完整 markdown 報告 + INSIGHTS。"
+                )
+                system = _DEEP_SYSTEM
+                max_tokens = 8000
+                spinner_msg = "深度分析中（5-30 秒）…"
+            else:
+                user_msg = (
+                    f"以下是最近 {len(window)} 天的健康資料寬表（CSV）：\n\n"
+                    f"```csv\n{csv}\n```\n\n{header_block}"
+                    "請依系統指示輸出三段分析。"
+                )
+                system = _COMPACT_SYSTEM
+                max_tokens = 1500
+                spinner_msg = "AI 摘要中…"
+            with st.spinner(spinner_msg):
+                try:
+                    content = _call_minimax(system, user_msg, max_tokens=max_tokens)
+                    st.markdown(content)
+                except Exception as exc:
+                    st.error(f"失敗：{exc}")
 
 st.caption("⚠ 本工具僅作生活資料探索之用，不能取代醫療診斷。任何持續性異常請諮詢醫師。")

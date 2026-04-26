@@ -51,8 +51,14 @@ iPhone「**健康** App → 個人頭像 → 匯出所有健康資料**」會產
 
 ## 隱私
 
-所有解析與分析都在本機完成，不會上傳任何資料。`.gitignore` 已排除
+所有解析與分析都在本機完成。`.gitignore` 已排除
 `export.xml` / `export.zip` / `data/` / `.cache/`。
+
+**唯一例外**：若你在儀表板「⚙ 設定」貼上 MiniMax token 並按「✨ AI 解讀」，
+那次的健康資料摘要會送到你選的 LLM 服務商（預設 MiniMax）。token 只存在你
+瀏覽器的 `localStorage`（純前端版）或 Streamlit session 記憶體（Python 版），
+**不會寫進 git、不會送到任何中間伺服器**。AI 功能完全選用，不啟用就跟原本一樣
+資料只在本機。
 
 ## 結構
 

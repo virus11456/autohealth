@@ -15,6 +15,7 @@
     <div class="subtitle">所有解析在你瀏覽器內進行，資料不會上傳到任何伺服器。</div>
   </div>
   <div>
+    <button id="openSettings" class="icon-btn" title="設定 (AI / Token)">⚙</button>
     <a href="https://github.com/virus11456/autohealth" target="_blank" rel="noopener">GitHub</a>
   </div>
 </header>
@@ -77,6 +78,7 @@
       <button class="tab" data-tab="tab-lag">⏱ 延遲相關</button>
       <button class="tab" data-tab="tab-anom">⚠ 異常天</button>
       <button class="tab" data-tab="tab-data">🧾 每日資料</button>
+      <button class="tab" data-tab="tab-ai">🤖 AI 解讀</button>
     </div>
 
     <div id="tab-insights" class="tab-content active">
@@ -140,8 +142,67 @@
       </div>
     </div>
 
+    <div id="tab-ai" class="tab-content">
+      <div id="aiStatus" class="ai-status"></div>
+      <div class="ai-actions">
+        <button class="primary" id="aiSummaryBtn" title="一次 LLM call，回 3 段">
+          ✨ 每日輕量摘要
+        </button>
+        <button class="secondary" id="aiDeepBtn" title="按 7 個任務輸出完整 markdown，~5-10 倍 token">
+          🔬 深度分析（7 任務）
+        </button>
+        <button class="secondary" id="aiPreviewBtn" title="不送出，只顯示要送什麼給 LLM">
+          👁 預覽 prompt
+        </button>
+      </div>
+      <div class="muted" style="margin-top:8px;">
+        Token / endpoint 在右上角 ⚙ 設定。所有資料只送往你選定的 LLM 服務商；token 只存在你瀏覽器的 localStorage。
+      </div>
+      <div id="aiOutput" class="ai-output"></div>
+    </div>
+
   </div>
 
+</div>
+
+<!-- Settings modal -->
+<div id="settingsModal" class="modal-backdrop" style="display:none">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>⚙ 設定</h2>
+      <button class="icon-btn" id="closeSettings" title="關閉">×</button>
+    </div>
+    <div class="modal-body">
+      <h3>MiniMax AI</h3>
+      <div class="muted" style="margin-bottom:10px;">
+        Token 只存在你瀏覽器的 localStorage，不會送到任何第三方伺服器（除了你選定的 LLM 服務商）。
+      </div>
+      <label>
+        API Token
+        <input type="password" id="cfgToken" placeholder="sk-xxx-..." autocomplete="off" />
+      </label>
+      <label>
+        Endpoint base URL
+        <input type="text" id="cfgBaseUrl" placeholder="https://api.minimaxi.com/v1" />
+        <span class="muted">CN: <code>api.minimaxi.com</code> · 國際: <code>api.minimax.io</code></span>
+      </label>
+      <label>
+        Model id
+        <input type="text" id="cfgModel" placeholder="MiniMax-M2.7" />
+        <span class="muted">高速版填 <code>MiniMax-M2.7-highspeed</code></span>
+      </label>
+      <label>
+        GroupId（可選，CN 版部分帳號需要）
+        <input type="text" id="cfgGroupId" placeholder="留空試試，401 再回來填" autocomplete="off" />
+      </label>
+      <div class="modal-actions">
+        <button class="secondary" id="cfgTest">🔌 測試連線</button>
+        <button class="secondary" id="cfgClear">🗑 清除 Token</button>
+        <button class="primary" id="cfgSave">儲存</button>
+      </div>
+      <div id="cfgTestResult" class="cfg-test-result"></div>
+    </div>
+  </div>
 </div>
 
 <div class="footer-note">
