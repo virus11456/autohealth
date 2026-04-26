@@ -3,8 +3,8 @@ import { buildDailyFrame } from "./aggregator.js";
 import { computeReadiness, computeEnvStress } from "./analyzer.js";
 import {
   getSettings, setSettings, clearSettings, isConfigured,
-  testConnection, callMinimax,
-  buildCompactSummaryPrompt, buildDeepAnalysisPrompt,
+  testConnection, callMinimax, callMinimaxChat,
+  buildCompactSummaryPrompt, buildDeepAnalysisPrompt, buildChatSystem,
 } from "./ai.js";
 import {
   renderTask1, renderTask2, renderTask3, renderTask4,
@@ -16,6 +16,9 @@ const state = {
   frame: null,        // full parsed frame (date-unfiltered)
   filtered: null,     // current date-filtered frame (used by tasks 2-7)
   activeTab: "tab-task2",
+  // chat state
+  aiMessages: [],     // [{role: 'user'|'assistant', content: '...'}]
+  aiChatBusy: false,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -345,11 +348,86 @@ function previewPrompt() {
   setAiOutput(html);
 }
 
+// ---------------- Chat (Task: chatbot over the analysed data) ------------
+
+function appendChatMessage(role, content, opts = {}) {
+  const wrap = $("#aiChatMessages");
+  const div = document.createElement("div");
+  div.className = `ai-chat-msg ${role}` + (opts.cls ? " " + opts.cls : "");
+  if (opts.escape || role === "user") {
+    div.textContent = content;
+  } else {
+    div.innerHTML = renderMarkdown(content);
+  }
+  wrap.appendChild(div);
+  wrap.scrollTop = wrap.scrollHeight;
+  return div;
+}
+
+async function sendChatMessage(rawText) {
+  if (state.aiChatBusy) return;
+  const input = $("#aiChatInput");
+  const userMsg = (rawText ?? input.value).trim();
+  if (!userMsg) return;
+  if (!isConfigured()) {
+    appendChatMessage("assistant", "⚠ 還沒設定 token，請點右上角 ⚙ 貼上你的 MiniMax token。", { escape: true, cls: "error" });
+    return;
+  }
+  if (!state.frame) {
+    appendChatMessage("assistant", "⚠ 還沒上傳資料，先回首頁上傳 export.zip 再來聊。", { escape: true, cls: "error" });
+    return;
+  }
+  input.value = "";
+  appendChatMessage("user", userMsg);
+  state.aiMessages.push({ role: "user", content: userMsg });
+
+  const thinking = appendChatMessage("assistant", "思考中…", { escape: true, cls: "thinking" });
+  state.aiChatBusy = true;
+  $("#aiChatSend").disabled = true;
+  try {
+    const messages = [
+      { role: "system", content: buildChatSystem(state.frame) },
+      ...state.aiMessages,
+    ];
+    const { content } = await callMinimaxChat(messages, { maxTokens: 1200 });
+    thinking.remove();
+    appendChatMessage("assistant", content);
+    state.aiMessages.push({ role: "assistant", content });
+    // Trim history if it gets too long (keep last 16 turns)
+    if (state.aiMessages.length > 20) state.aiMessages = state.aiMessages.slice(-16);
+  } catch (e) {
+    thinking.remove();
+    appendChatMessage("assistant", `❌ 出錯：${e.message}`, { escape: true, cls: "error" });
+  } finally {
+    state.aiChatBusy = false;
+    $("#aiChatSend").disabled = false;
+  }
+}
+
+function clearChat() {
+  if (state.aiMessages.length && !confirm("確定清空目前對話？")) return;
+  state.aiMessages = [];
+  $("#aiChatMessages").innerHTML = "";
+}
+
 function setupAiTab() {
   refreshAiStatus();
   $("#aiSummaryBtn").addEventListener("click", () => runAi("compact"));
   $("#aiDeepBtn").addEventListener("click", () => runAi("deep"));
   $("#aiPreviewBtn").addEventListener("click", previewPrompt);
+  $("#aiClearChat").addEventListener("click", clearChat);
+
+  // Chat handlers
+  $("#aiChatSend").addEventListener("click", () => sendChatMessage());
+  $("#aiChatInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      sendChatMessage();
+    }
+  });
+  $$("#aiChatSuggestions .suggestion").forEach((btn) => {
+    btn.addEventListener("click", () => sendChatMessage(btn.textContent));
+  });
 }
 
 // ---------------- boot ----------------------------------------------------

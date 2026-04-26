@@ -291,6 +291,72 @@ export function buildCompactSummaryPrompt(frame, opts = {}) {
   return { system: COMPACT_SYSTEM, user };
 }
 
+// Build the persistent system prompt for the chatbot. Includes the recent
+// 30 days CSV + today's snapshot. Sent once per turn alongside the rolling
+// message history so the model always has direct data access without us
+// having to pre-summarise every metric.
+const CHAT_SYSTEM_RULES = `你是親切的健康數據分析助手。使用者上傳了 Apple Health 資料給儀表板分析，
+他現在想跟你聊天問問題。你看得到他下面的健康資料原始 CSV，所以可以直接引用具體數字。
+
+回答原則：
+1. 使用者問什麼就答什麼，**不要主動展開到沒問的事**
+2. 用繁體中文、白話、平易近人。**避免**「自律神經」「σ」「partial correlation」「Spearman」這類專業術語
+3. 想引用數據時用具體數字（例：「你最近 7 天 HRV 平均 42ms，比平常少 4ms」）
+4. 不確定 / 資料不夠時就明說「資料不夠」
+5. **永遠不要做醫療診斷**。需要時建議看醫生
+6. 預設回答 2-4 句就夠，使用者要求展開再展開
+7. 提到「會不會生病 / 該不該吃藥 / 是不是有病」這類問題時，附一句「此為數據觀察，不構成醫療診斷」`;
+
+export function buildChatSystem(frame, opts = {}) {
+  const lookback = opts.lookback ?? 30;
+  const recent = frame.rows.slice(-lookback);
+  const csv = rowsToCsv(recent, frame.columns, { includeBaselines: true });
+  const last = frame.rows[frame.rows.length - 1] || {};
+  const headerLines = [];
+  if (Number.isFinite(last.readiness)) headerLines.push(`今日 Readiness 分數：${last.readiness.toFixed(0)} / 100`);
+  if (Number.isFinite(last.env_stress)) headerLines.push(`今日 Environment Stress：${last.env_stress.toFixed(0)} / 100`);
+  if (last.date) headerLines.push(`最新一筆日期：${last.date}`);
+
+  return `${CHAT_SYSTEM_RULES}
+
+以下是使用者最近 ${recent.length} 天的每日健康指標（含 30 天滾動 baseline 與 z-score 衍生欄位）：
+
+\`\`\`csv
+${csv}
+\`\`\`
+
+${headerLines.length ? "**今日狀態快照**\n" + headerLines.join("\n") : ""}`;
+}
+
+// Multi-turn chat call — pass an array of {role, content} messages.
+// Throws on non-2xx. Conversation history is the caller's responsibility.
+export async function callMinimaxChat(messages, opts = {}) {
+  const s = getSettings();
+  if (!s.token) throw new Error("尚未填入 MiniMax token，請先到「設定」貼上");
+  const url = endpointUrl(s);
+  const body = {
+    model: s.model,
+    messages,
+    max_tokens: opts.maxTokens ?? 1500,
+    temperature: opts.temperature ?? 0.4,
+  };
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: authHeaders(s),
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "(無回應)");
+    throw new Error(`HTTP ${resp.status}: ${text.slice(0, 600)}`);
+  }
+  const data = await resp.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error(`回應格式異常：${JSON.stringify(data).slice(0, 600)}`);
+  }
+  return { content, raw: data };
+}
+
 export function buildDeepAnalysisPrompt(frame) {
   // Full window with baselines so the LLM has everything it needs in one shot.
   const csv = rowsToCsv(frame.rows, frame.columns, { includeBaselines: true });

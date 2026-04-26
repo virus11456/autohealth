@@ -88,21 +88,46 @@
 
     <div id="tab-ai" class="tab-content">
       <div id="aiStatus" class="ai-status"></div>
-      <div class="ai-actions">
-        <button class="primary" id="aiSummaryBtn" title="一次 LLM call，回 3 段">
-          ✨ 每日輕量摘要
-        </button>
-        <button class="secondary" id="aiDeepBtn" title="按 7 個任務輸出完整 markdown，~5-10 倍 token">
-          🔬 深度分析（7 任務）
-        </button>
-        <button class="secondary" id="aiPreviewBtn" title="不送出，只顯示要送什麼給 LLM">
-          👁 預覽 prompt
-        </button>
+
+      <h3 style="margin: 12px 0 8px 0;">💬 跟 AI 聊聊你的資料</h3>
+      <div class="muted" style="margin-bottom:8px;">
+        AI 會看到你最近 30 天的健康資料 + 今日快照。直接問問題就好。
       </div>
-      <div class="muted" style="margin-top:8px;">
-        Token / endpoint 在右上角 ⚙ 設定。所有資料只送往你選定的 LLM 服務商；token 只存在你瀏覽器的 localStorage。
+      <div id="aiChatMessages" class="ai-chat-messages"></div>
+      <div class="ai-chat-suggestions" id="aiChatSuggestions">
+        <button class="suggestion">最近會不會生病？</button>
+        <button class="suggestion">我該怎麼睡得更好？</button>
+        <button class="suggestion">我有哪裡需要注意嗎？</button>
+        <button class="suggestion">最近狀態有變好嗎？</button>
+        <button class="suggestion">為什麼我最近這麼累？</button>
       </div>
-      <div id="aiOutput" class="ai-output"></div>
+      <div class="ai-chat-input">
+        <textarea id="aiChatInput" placeholder="問我關於你的健康資料... (Cmd/Ctrl + Enter 送出)" rows="2"></textarea>
+        <button id="aiChatSend" class="primary">送出</button>
+      </div>
+
+      <details style="margin-top: 24px;">
+        <summary class="muted" style="cursor: pointer; font-size: 0.88rem;">🛠 一次性報告 / 預覽 prompt</summary>
+        <div class="ai-actions" style="margin-top:10px;">
+          <button class="secondary" id="aiSummaryBtn" title="一次 LLM call，回 3 段">
+            ✨ 每日輕量摘要
+          </button>
+          <button class="secondary" id="aiDeepBtn" title="按 7 個任務輸出完整 markdown">
+            🔬 深度分析（7 任務）
+          </button>
+          <button class="secondary" id="aiPreviewBtn" title="不送出，只顯示要送什麼給 LLM">
+            👁 預覽 prompt
+          </button>
+          <button class="secondary" id="aiClearChat" title="清空目前的聊天紀錄">
+            🗑 清空對話
+          </button>
+        </div>
+        <div id="aiOutput" class="ai-output"></div>
+      </details>
+
+      <div class="muted" style="margin-top:14px; font-size:0.78rem;">
+        Token / endpoint 在右上角 ⚙ 設定。資料只送往你選定的 LLM 服務商；token 只存在你瀏覽器的 localStorage。
+      </div>
     </div>
 
   </div>
