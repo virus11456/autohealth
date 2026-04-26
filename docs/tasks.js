@@ -1318,8 +1318,229 @@ export function renderTask5(frame, container) {
     }
   }
 }
+// Spec'd readiness components (per the analytical brief). Each component is a
+// scaled z-score-equivalent in roughly [-2, +2]; the final aggregation is
+//   50 + 12.5 * Σ(w_i * c_i) / Σ w_i (over available components)
+// which keeps the score on a 0-100 axis even when some components are missing.
+function readinessComponents(row) {
+  const clip = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const out = {};
+  if (Number.isFinite(row.hrv_zscore30)) out.hrv = clip(row.hrv_zscore30, -2, 2);
+  if (Number.isFinite(row.resting_hr_zscore30)) out.rhr = clip(-row.resting_hr_zscore30, -2, 2);
+  if (Number.isFinite(row.sleep_score)) out.sleep = (row.sleep_score - 70) / 15;
+  if (Number.isFinite(row.respiratory_zscore30)) out.resp = clip(-row.respiratory_zscore30, -2, 2);
+  if (Number.isFinite(row.wrist_temp_delta_c_zscore30)) out.temp = clip(-Math.abs(row.wrist_temp_delta_c_zscore30), -2, 0);
+  return out;
+}
+
+const READINESS_WEIGHTS = {
+  spec:        { hrv: 0.30, rhr: 0.25, sleep: 0.25, resp: 0.10, temp: 0.10, label: "Brief 規格" },
+  hrvHeavy:    { hrv: 0.40, rhr: 0.20, sleep: 0.20, resp: 0.10, temp: 0.10, label: "HRV 加重" },
+  sleepHeavy:  { hrv: 0.20, rhr: 0.20, sleep: 0.35, resp: 0.15, temp: 0.10, label: "睡眠加重" },
+  equal:       { hrv: 0.20, rhr: 0.20, sleep: 0.20, resp: 0.20, temp: 0.20, label: "等權" },
+};
+
+function aggregateReadiness(components, weights) {
+  let weighted = 0, weightSum = 0;
+  for (const k of ["hrv", "rhr", "sleep", "resp", "temp"]) {
+    if (k in components) {
+      weighted += weights[k] * components[k];
+      weightSum += weights[k];
+    }
+  }
+  if (weightSum === 0) return NaN;
+  // Renormalize so partial-coverage days still produce comparable scores
+  const normalizedSum = weighted / weightSum;
+  return Math.max(0, Math.min(100, 50 + 12.5 * normalizedSum));
+}
+
+function readinessClassFromValue(v) {
+  if (!Number.isFinite(v)) return { emoji: "⚪", label: "資料不足", cls: "empty", color: "var(--muted)" };
+  if (v >= 75) return { emoji: "🟢", label: "綠燈", cls: "good", color: "var(--good)" };
+  if (v >= 60) return { emoji: "🔵", label: "尚可", cls: "fair", color: "var(--info)" };
+  if (v >= 40) return { emoji: "🟡", label: "偏低", cls: "low", color: "var(--warn)" };
+  return { emoji: "🔴", label: "紅燈", cls: "alert", color: "var(--bad)" };
+}
+
+const COMPONENT_LABEL = {
+  hrv:   "HRV",
+  rhr:   "靜息心率",
+  sleep: "睡眠分數",
+  resp:  "呼吸頻率穩定",
+  temp:  "手腕體溫穩定",
+};
+
 export function renderTask6(frame, container) {
-  container.innerHTML = PENDING_NOTE(6, "✅ 任務 6：Readiness Score");
+  if (!frame || frame.rows.length < 14) {
+    container.innerHTML = `<h2 class="task-title">✅ 任務 6：Readiness Score</h2>` +
+      emptyState("資料量太少，至少需要 14 天 + 30 天 baseline 才能算公式。");
+    return;
+  }
+
+  // Compute readiness for every row (with all 4 weight schemes ready for sensitivity)
+  const readiness = frame.rows.map((row) => {
+    const c = readinessComponents(row);
+    return {
+      components: c,
+      spec:       aggregateReadiness(c, READINESS_WEIGHTS.spec),
+      hrvHeavy:   aggregateReadiness(c, READINESS_WEIGHTS.hrvHeavy),
+      sleepHeavy: aggregateReadiness(c, READINESS_WEIGHTS.sleepHeavy),
+      equal:      aggregateReadiness(c, READINESS_WEIGHTS.equal),
+    };
+  });
+
+  // Pick today's row (latest with finite spec readiness)
+  let todayIdx = -1;
+  for (let i = readiness.length - 1; i >= 0; i--) {
+    if (Number.isFinite(readiness[i].spec)) { todayIdx = i; break; }
+  }
+  if (todayIdx < 0) {
+    container.innerHTML = `<h2 class="task-title">✅ 任務 6：Readiness Score</h2>` +
+      callout("warn", `<strong>⚠ 沒有可算分數的天</strong>　大概是 30 天 baseline 還沒成形（HRV / 靜息心率 / 睡眠分數 / 呼吸頻率 任一個的 z-score 都還沒有資料）。`);
+    return;
+  }
+  const today = readiness[todayIdx];
+  const todayDate = frame.rows[todayIdx].date;
+  const todayClass = readinessClassFromValue(today.spec);
+
+  // Recent 7-day mean / prior 21-day mean (using spec weights)
+  const specSeries = readiness.map((r) => r.spec);
+  const finiteIdx = [];
+  for (let i = 0; i < specSeries.length; i++) if (Number.isFinite(specSeries[i])) finiteIdx.push(i);
+  const last7 = finiteIdx.slice(-7).map((i) => specSeries[i]);
+  const prior21 = finiteIdx.slice(-28, -7).map((i) => specSeries[i]);
+  const recent7Mean = last7.length ? meanFinite(last7) : NaN;
+  const prior21Mean = prior21.length >= 5 ? meanFinite(prior21) : NaN;
+  const trend = (Number.isFinite(recent7Mean) && Number.isFinite(prior21Mean))
+    ? recent7Mean - prior21Mean : NaN;
+
+  // Dominant driver today: which component is pulling spec score the most
+  // (positive contribution = pushes up; negative = pulls down)
+  const todayContribs = [];
+  for (const k of ["hrv", "rhr", "sleep", "resp", "temp"]) {
+    if (k in today.components) {
+      todayContribs.push({
+        key: k, label: COMPONENT_LABEL[k],
+        value: today.components[k],
+        contribution: READINESS_WEIGHTS.spec[k] * today.components[k],
+      });
+    }
+  }
+  todayContribs.sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution));
+  const driver = todayContribs[0];
+
+  // Day classification counts (over all finite readiness days)
+  const greens = finiteIdx.filter((i) => specSeries[i] >= 75);
+  const reds = finiteIdx.filter((i) => specSeries[i] < 40);
+
+  // Sensitivity comparison table
+  const sensRows = ["spec", "hrvHeavy", "sleepHeavy", "equal"].map((k) => {
+    const w = READINESS_WEIGHTS[k];
+    const v = today[k];
+    return [
+      w.label,
+      `${(w.hrv * 100).toFixed(0)} / ${(w.rhr * 100).toFixed(0)} / ${(w.sleep * 100).toFixed(0)} / ${(w.resp * 100).toFixed(0)} / ${(w.temp * 100).toFixed(0)}`,
+      Number.isFinite(v) ? v.toFixed(1) : "—",
+      readinessClassFromValue(v).label,
+    ];
+  });
+
+  // ---- Render ----
+  let html = `<h2 class="task-title">✅ 任務 6：自製 Readiness Score</h2>`;
+  html += `<p class="task-intro">把 HRV / 靜息心率 / 睡眠分數 / 呼吸頻率 / 手腕體溫的 z-score 整合成 0-100 的每日恢復分數。指導「今天該不該硬操、該不該做重要決策」。</p>`;
+
+  // Hero today's score
+  html += `<div class="readiness-hero status-${todayClass.cls}">
+    <div class="readiness-date muted">${todayDate}</div>
+    <div class="readiness-value" style="color:${todayClass.color}">${Number.isFinite(today.spec) ? today.spec.toFixed(0) : "—"}<span class="readiness-scale"> / 100</span></div>
+    <div class="readiness-band" style="color:${todayClass.color}">${todayClass.emoji} ${todayClass.label}</div>
+    <div class="readiness-trend muted">
+      近 7 天均：<strong>${Number.isFinite(recent7Mean) ? recent7Mean.toFixed(1) : "—"}</strong>　·
+      前 21 天均：<strong>${Number.isFinite(prior21Mean) ? prior21Mean.toFixed(1) : "—"}</strong>　·
+      ${Number.isFinite(trend) ? `趨勢：<span style="color:${trend > 0 ? "var(--good)" : trend < 0 ? "var(--bad)" : "var(--muted)"}"><strong>${trend >= 0 ? "+" : ""}${trend.toFixed(1)}</strong></span>` : ""}
+    </div>
+  </div>`;
+
+  // Today's interpretation paragraph
+  if (driver) {
+    const isPushUp = driver.contribution >= 0;
+    const drvSign = isPushUp ? "拉高" : "拉低";
+    const drvClass = isPushUp ? "good" : "alert";
+    const trendText = !Number.isFinite(trend) ? "" :
+      trend > 2 ? "整體還在改善趨勢中" :
+      trend < -2 ? "整體在惡化趨勢中（建議減量、提早睡）" :
+      "趨勢相對平穩";
+    html += callout(drvClass,
+      `<strong>今日狀態解讀</strong>　${todayDate} 分數 ${today.spec.toFixed(0)} / 100（${todayClass.label}）。` +
+      `主要由 <strong>${driver.label}</strong> ${drvSign}（contribution = ${driver.contribution >= 0 ? "+" : ""}${driver.contribution.toFixed(2)}）。${trendText}。`);
+  }
+
+  // 365-day chart + threshold legend
+  html += `<h3>📈 過去 365 天 Readiness 走勢</h3>`;
+  html += `<p class="muted">綠 ≥ 75 = 可硬操、可做重要決策；紅 &lt; 40 = 建議減量、避免關鍵決策。橫虛線是這兩條閾值。</p>`;
+  html += `<div id="t6-chart" class="task-chart"></div>`;
+  html += `<p class="muted">在這個分析期間：🟢 綠燈 ${greens.length} 天 (${(greens.length / finiteIdx.length * 100).toFixed(0)}%)　·　🔴 紅燈 ${reds.length} 天 (${(reds.length / finiteIdx.length * 100).toFixed(0)}%)</p>`;
+
+  // Component breakdown today
+  html += `<h3>🧩 今日各組成成分</h3>`;
+  html += `<p class="muted">每個組成的 scaled z-score（理想值靠近 +2，警戒在 -2）和它對今日總分的加權貢獻。</p>`;
+  const compRows = ["hrv", "rhr", "sleep", "resp", "temp"].map((k) => {
+    const c = today.components[k];
+    if (!(k in today.components)) {
+      return [COMPONENT_LABEL[k], `${(READINESS_WEIGHTS.spec[k] * 100).toFixed(0)} %`, "—", "—"];
+    }
+    const contrib = READINESS_WEIGHTS.spec[k] * c;
+    return [
+      COMPONENT_LABEL[k],
+      `${(READINESS_WEIGHTS.spec[k] * 100).toFixed(0)} %`,
+      c.toFixed(2),
+      `<span style="color:${contrib >= 0 ? "var(--good)" : "var(--bad)"}">${contrib >= 0 ? "+" : ""}${contrib.toFixed(2)}</span>`,
+    ];
+  });
+  html += tableHtml(["成分", "權重", "今日 scaled z", "今日加權貢獻"], compRows, { numCols: [1, 2, 3] });
+
+  // Sensitivity table
+  html += `<h3>🎚 權重敏感度（換組權重結果差多少？）</h3>`;
+  html += `<p class="muted">用四組合理的權重各自算今天的分數。如果四個結果差異很大，代表你今天的訊號不一致，分數脆弱；差異小代表訊號一致、結論穩。</p>`;
+  html += tableHtml(
+    ["權重組合", "HRV / RHR / 睡眠 / 呼吸 / 體溫 (%)", "今日分數", "燈號"],
+    sensRows, { numCols: [2] });
+
+  container.innerHTML = html;
+
+  // Render the 365-day plot
+  if (typeof Plotly !== "undefined") {
+    const div = document.getElementById("t6-chart");
+    if (div) {
+      const dates = frame.rows.map((r) => r.date);
+      const traces = [
+        { x: dates, y: specSeries, type: "scatter", mode: "lines+markers",
+          line: { width: 2, color: "#4f8cff" },
+          marker: {
+            size: 5,
+            color: specSeries.map((v) => readinessClassFromValue(v).color),
+          },
+          name: "Readiness",
+          hovertemplate: "%{x}<br>分數 %{y:.0f}<extra></extra>",
+        },
+      ];
+      Plotly.newPlot(div, traces, {
+        paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+        font: { color: "#e6e9ef", family: "inherit", size: 11 },
+        margin: { l: 50, r: 20, t: 20, b: 40 },
+        xaxis: { gridcolor: "rgba(127,127,127,0.08)" },
+        yaxis: { range: [0, 100], gridcolor: "rgba(127,127,127,0.08)",
+                 title: { text: "Readiness", font: { size: 11 } } },
+        shapes: [
+          { type: "line", xref: "paper", x0: 0, x1: 1, y0: 75, y1: 75,
+            line: { color: "var(--good)", width: 1, dash: "dot" } },
+          { type: "line", xref: "paper", x0: 0, x1: 1, y0: 40, y1: 40,
+            line: { color: "var(--bad)", width: 1, dash: "dot" } },
+        ],
+        height: 320, showlegend: false,
+      }, { displaylogo: false, responsive: true });
+    }
+  }
 }
 export function renderTask7(frame, container) {
   container.innerHTML = PENDING_NOTE(7, "🤒 任務 7：生病早警");
