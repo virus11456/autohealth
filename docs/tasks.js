@@ -1473,9 +1473,58 @@ export function renderTask5(frame, container) {
     };
   });
 
+  // ---- Today's verdict ----
+  // Compute "circadian health" from recent daylight + bedtime stability +
+  // last 7 days sleep score. We have plenty of helpful signals already.
+  const last7Daylight = daylight.slice(-7).filter(Number.isFinite);
+  const recentDaylightAvg = last7Daylight.length ? meanFinite(last7Daylight) : NaN;
+  const bedStdLatest = latestStd?.std;
+
+  const envWarnings = [];
+  const envGood = [];
+  const envEffects = [];
+
+  if (Number.isFinite(recentDaylightAvg)) {
+    if (recentDaylightAvg < 30) {
+      envWarnings.push("最近曬太陽太少");
+      envEffects.push({ kind: "bad", title: "⚠ 最近日照太少（< 30 分 / 天）",
+        body: "太陽是讓身體分辨「白天 / 晚上」最強的訊號。長期日照不足 → 晚上深睡比下降、白天疲倦感、情緒容易低落。" });
+    } else if (recentDaylightAvg >= 60) {
+      envGood.push("曬太陽充足");
+    }
+  }
+  if (Number.isFinite(bedStdLatest)) {
+    if (bedStdLatest > 1.5) {
+      envWarnings.push("作息很不穩");
+      envEffects.push({ kind: "bad", title: "⚠ 上床時間天天不一樣（標準差 > 1.5 小時）",
+        body: "身體有自己的時鐘——固定時間上床效率最高。作息亂 → 深睡比下降、HRV 下降、白天精神差。常見原因：輪班、加班、跨時區、追劇追到很晚。" });
+    } else if (bedStdLatest <= 0.8) {
+      envGood.push("作息固定");
+    }
+  }
+
+  let envVerdict;
+  if (!Number.isFinite(recentDaylightAvg) && !Number.isFinite(bedStdLatest)) {
+    envVerdict = { cls: "empty", emoji: "⚪", headline: "資料不足",
+      detail: "需要日照 + 睡眠時間紀錄才能看節律。" };
+  } else if (envWarnings.length === 0) {
+    envVerdict = { cls: "good", emoji: "🟢", headline: "節律狀態不錯",
+      detail: envGood.length ? `表現：${envGood.join("、")}。` : "日照與作息都在正常範圍。",
+      action: "繼續維持。" };
+  } else if (envWarnings.length === 1) {
+    envVerdict = { cls: "low", emoji: "🟡", headline: "有一個地方要調整",
+      detail: envWarnings[0] + "，會慢慢影響你的睡眠 / 精神。",
+      action: envWarnings[0].includes("曬太陽") ? "每天午前出門曬 15-30 分鐘太陽。" : "週間至少有 5 天固定上床時間。" };
+  } else {
+    envVerdict = { cls: "alert", emoji: "🔴", headline: "節律明顯失調",
+      detail: envWarnings.join("、") + "。生理節律亂掉是「累、煩、淺睡、容易感冒」的根源。",
+      action: "從一個簡單習慣開始：固定起床時間 + 早上曬太陽 10 分鐘。" };
+  }
+
   // ---- Render ----
-  let html = `<h2 class="task-title">🌅 任務 5：環境與生理節律</h2>`;
-  html += `<p class="task-intro">日照是調節晝夜節律最強的因子；上床時間穩定性會反映在 HRV 與深睡比上。常出國（時區跳動）這個分頁特別有用。</p>`;
+  let html = `<h2 class="task-title">🌅 任務 5：日照與作息</h2>`;
+  html += `<p class="task-intro">看你「曬太陽夠不夠」+「作息穩不穩」對睡眠 / 精神的影響。生理節律是一切的基底——亂了之後 HRV、睡眠、情緒都會跟著亂。</p>`;
+  html += verdictPanel(envVerdict);
 
   // Top cards
   html += `<h3>📊 環境 + 節律核心指標</h3>`;
@@ -1516,57 +1565,70 @@ export function renderTask5(frame, container) {
   });
   html += `</div>`;
 
-  // Daylight bin
-  html += `<h3>☀ 日照時間 → 當晚睡眠分數分佈</h3>`;
-  html += `<p class="muted">把每日日照時間分 4 箱，看當晚睡眠分數的分佈。理想：日照越多，睡眠分數中位數越高。</p>`;
-  html += tableHtml(["日照區間", "天數", "睡眠分數平均"],
+  // ---- Effects on body (plain-language)
+  if (envEffects.length) {
+    html += `<h3>💡 對你身體的可能影響</h3>`;
+    html += `<div class="effects-list">`;
+    for (const e of envEffects) {
+      html += `<div class="effect-item ${e.kind}">
+        <div class="effect-title">${e.title}</div>
+        <div class="effect-body">${e.body}</div>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  // Daylight bin (visual is intuitive)
+  html += `<h3>☀ 曬越多太陽 → 當晚睡得越好嗎？</h3>`;
+  html += `<p class="muted">把每天的日照時間分成 4 段，看當晚的睡眠分數。</p>`;
+  html += tableHtml(["日照", "天數", "當晚睡眠分數平均"],
     daylightBins.map((b) => [b.label, b.scores.length,
       b.scores.length ? meanFinite(b.scores).toFixed(1) : "—"]),
     { numCols: [1, 2] });
   html += `<div id="t5-bin" class="task-chart"></div>`;
 
   // Monthly bedtime std
-  html += `<h3>📈 月度作息穩定度</h3>`;
-  if (monthlyStd.length < 2) {
-    html += `<p class="muted">資料還不到 2 個月，無法畫月度趨勢。</p>`;
-  } else {
-    html += `<p class="muted">每月上床時間的標準差。&lt; 0.5 h = 作息相當固定；&gt; 1.5 h = 上床時間天天不同。</p>`;
+  if (monthlyStd.length >= 2) {
+    html += `<h3>📈 你每月作息有多穩定</h3>`;
+    html += `<p class="muted">柱子越短 = 作息越固定。綠色 = 很穩、橘色 = 略亂、紅色 = 很亂。</p>`;
     html += `<div id="t5-stab" class="task-chart"></div>`;
   }
 
-  // Daylight deficit t-test
-  html += `<h3>🌧 日照不足連 3 天後 HRV 影響</h3>`;
-  if (!deficitT) {
-    html += `<p class="muted">資料中沒有「日照 &lt; 30 分」連續 3 天以上的時段，或樣本太少無法做 t-test。</p>`;
+  // Weekend vs weekday — pick top 2-3 significant differences and show as plain text
+  html += `<h3>📅 你的「週末恢復效應」存在嗎？</h3>`;
+  const sigWk = wkRows.filter((r) => Number.isFinite(r.t.p) && r.t.p < 0.05);
+  if (!sigWk.length) {
+    html += `<p class="muted">看不出明顯的週末差別——你週末跟平日的身體訊號差不多。</p>`;
   } else {
-    const dropMs = deficitT.ma - deficitT.mb;
-    const isSig = Number.isFinite(deficitT.p) && deficitT.p < 0.05;
-    const sigClass = isSig ? (dropMs < 0 ? "alert" : "info") : "info";
-    html += callout(sigClass,
-      `<strong>${isSig ? (dropMs < 0 ? "⚠ HRV 顯著下降" : "ℹ 有顯著差異（往上）") : "ℹ 沒有顯著影響"}</strong><br>` +
-      `日照不足後 7 天 HRV 平均：<strong>${deficitT.ma.toFixed(1)} ms</strong> (n = ${deficitT.na})<br>` +
-      `其他時段 HRV 平均：<strong>${deficitT.mb.toFixed(1)} ms</strong> (n = ${deficitT.nb})<br>` +
-      `差異 ${(dropMs >= 0 ? "+" : "") + dropMs.toFixed(1)} ms　·　Welch t = ${deficitT.t.toFixed(2)}, p = ${Number.isFinite(deficitT.p) ? deficitT.p.toFixed(3) : "—"}${isSig ? " *" : ""}`);
+    const lines = sigWk.slice(0, 4).map((r) => {
+      const diff = r.wkndMean - r.wkdyMean;
+      const goodSign = r.higherBetter ? diff > 0 : diff < 0;
+      const wkndDesc = goodSign ? "比較好" : "比較差";
+      return `<li><strong>${r.label}</strong>：週末${wkndDesc}（差距 ${diff >= 0 ? "+" : ""}${diff.toFixed(1)}${r.unit}）</li>`;
+    });
+    const goodCount = sigWk.filter((r) => {
+      const d = r.wkndMean - r.wkdyMean;
+      return r.higherBetter ? d > 0 : d < 0;
+    }).length;
+    const overallGood = goodCount > sigWk.length / 2;
+    html += callout(overallGood ? "good" : "low",
+      `<strong>${overallGood ? "週末確實有恢復效應 ✓" : "週末沒有恢復到，反而更差"}</strong>` +
+      `<ul style="margin: 6px 0 0 0; padding-left: 1.2em;">${lines.join("")}</ul>`);
   }
-
-  // Weekend vs weekday
-  html += `<h3>📅 假日 vs 平日全指標差異</h3>`;
-  html += `<p class="muted">看「週末恢復效應」是否真的存在。Welch t-test，p &lt; 0.05 = 有顯著差異（標 *）。</p>`;
+  html += `<details style="margin-top:8px;"><summary class="muted" style="cursor:pointer; font-size:0.85rem;">想看完整數字</summary>`;
   const wkTableRows = wkRows.map((r) => {
     const diff = r.wkndMean - r.wkdyMean;
     const goodSign = Number.isFinite(diff) && (r.higherBetter ? diff > 0 : diff < 0);
-    const sigStar = Number.isFinite(r.t.p) && r.t.p < 0.05 ? " *" : "";
     const dirText = Number.isFinite(diff) ? (diff >= 0 ? "+" : "") + diff.toFixed(2) + r.unit : "—";
     return [
       r.label,
       Number.isFinite(r.wkdyMean) ? r.wkdyMean.toFixed(2) + r.unit : "—",
       Number.isFinite(r.wkndMean) ? r.wkndMean.toFixed(2) + r.unit : "—",
       `<span style="color:${goodSign ? 'var(--good)' : 'var(--bad)'}">${dirText}</span>`,
-      Number.isFinite(r.t.p) ? r.t.p.toFixed(3) + sigStar : "—",
     ];
   });
-  html += tableHtml(["指標", "平日均", "週末均", "週末 vs 平日 (差)", "p 值"], wkTableRows,
-    { numCols: [1, 2, 3, 4] });
+  html += tableHtml(["指標", "平日均", "週末均", "週末 vs 平日"], wkTableRows, { numCols: [1, 2, 3] });
+  html += `</details>`;
 
   container.innerHTML = html;
 
