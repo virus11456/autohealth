@@ -886,6 +886,16 @@ function corrStatus(r) {
   return { emoji: "⚪", label: "不顯著", cls: "empty" };
 }
 
+// Plain-language version: how strong is the influence (one-direction r magnitude).
+function corrStrengthPlain(r) {
+  if (!Number.isFinite(r)) return { emoji: "⚪", label: "資料不夠", cls: "empty" };
+  const abs = Math.abs(r);
+  if (abs >= 0.5) return { emoji: "🟢", label: "影響很大", cls: "good" };
+  if (abs >= 0.3) return { emoji: "🔵", label: "影響中等", cls: "fair" };
+  if (abs >= 0.15) return { emoji: "🟡", label: "影響有限", cls: "low" };
+  return { emoji: "⚪", label: "沒明顯影響", cls: "empty" };
+}
+
 // Stat card: like metricCard but for derived statistics (no raw value /
 // sparkline). Shows a label, a big stat, optional subtitle, status pill, hint.
 function statCard({ label, value, subtitle = "", status, hint = "" }) {
@@ -951,15 +961,33 @@ export function renderTask3(frame, container) {
   })();
 
   const hypotheses = [
-    { id: "A", name: "總睡眠時長", desc: "(控制深睡 / REM)",
-      hint: "睡時數越長，隔日 HRV 越高",
-      r: hypA.r, n: hypA.n },
-    { id: "B", name: "深睡時長", desc: "(控制總時長 / REM)",
-      hint: "即使總時長不變，深睡分鐘多 → 隔日恢復更好",
-      r: hypB.r, n: hypB.n },
-    { id: "C", name: "深睡 + REM 比", desc: "(深睡 + REM) / 總時長",
-      hint: "高效睡眠（深 + REM 佔比高）→ 隔日恢復更好",
-      r: hypC.r, n: hypC.n },
+    { id: "A", name: "睡多久（總時數）",
+      desc: "排除深睡 / REM 影響後的單純時長效應",
+      hint: "睡得越久，隔天身體越放鬆",
+      r: hypA.r, n: hypA.n,
+      tips: [
+        "今晚比平常早 30 分鐘上床",
+        "週末別補眠補太多（會打亂作息）",
+        "睡前 1 小時不要再排事情",
+      ] },
+    { id: "B", name: "深睡睡多久",
+      desc: "排除總時長 / REM 影響後的深睡效應",
+      hint: "深睡分鐘多 = 身體真的在修復",
+      r: hypB.r, n: hypB.n,
+      tips: [
+        "睡前 3 小時內不要喝酒（深睡的最大殺手）",
+        "房間溫度涼一點（18-20 度）",
+        "睡前 1 小時不要看螢幕（藍光抑制深睡）",
+      ] },
+    { id: "C", name: "睡得深 + 做夢的比例",
+      desc: "(深睡 + REM) ÷ 總睡眠時間",
+      hint: "比例高 = 睡得有效率",
+      r: hypC.r, n: hypC.n,
+      tips: [
+        "固定每天差不多時間上床 / 起床（含週末）",
+        "床只用來睡覺，不要在床上工作 / 滑手機",
+        "白天充足日照，睡前盡量黑暗",
+      ] },
   ];
   const winner = [...hypotheses].sort((a, b) =>
     (Number.isFinite(b.r) ? Math.abs(b.r) : -1) - (Number.isFinite(a.r) ? Math.abs(a.r) : -1))[0];
@@ -1001,62 +1029,62 @@ export function renderTask3(frame, container) {
   }));
 
   // ---- Render ----
-  let html = `<h2 class="task-title">💤 任務 3：睡眠 → 隔日恢復</h2>`;
-  html += `<p class="task-intro">把昨晚的睡眠特徵跟今天的恢復指標對齊（lag = 1 天），驗證「對你而言」哪個睡眠面向最值得優化。</p>`;
+  let html = `<h2 class="task-title">💤 任務 3：睡眠 → 隔天精神</h2>`;
+  html += `<p class="task-intro">看你「昨晚怎麼睡」對「今天精神恢復」的影響有多大，找出對你最有用的睡眠優化方向。</p>`;
 
-  // 3 hypothesis cards
-  html += `<h3>🧪 三個假設：哪個睡眠面向對隔日 HRV 最重要？</h3>`;
-  html += `<p class="muted">Partial correlation 排除其他睡眠變數的線性影響後，跟今天 HRV 的相關係數。|r| 越高 = 越獨立重要。</p>`;
+  // Top verdict
+  const winnerStrength = corrStrengthPlain(winner.r);
+  if (Number.isFinite(winner.r) && Math.abs(winner.r) >= 0.15) {
+    html += verdictPanel({
+      cls: winnerStrength.cls, emoji: winnerStrength.emoji,
+      headline: `對你最有用的睡眠優化：${winner.name}`,
+      detail: `根據你的資料，${winner.name}對隔天 HRV 的影響最大。` +
+              (winner.r > 0 ? "這個面向越好 → 你隔天的恢復越好。" : "這個面向越多 → 隔天反而 HRV 越低，需要再多資料確認。"),
+      action: winner.tips ? winner.tips[0] : "",
+    });
+  } else {
+    html += verdictPanel({
+      cls: "low", emoji: "🟡",
+      headline: "三個面向影響都不明顯",
+      detail: "可能是資料還不夠多，或睡眠以外的因素（壓力、運動、咖啡因）影響更大。",
+      action: "繼續累積資料；同時注意睡眠規律 + 睡前不喝酒 + 房間涼。",
+    });
+  }
+
+  // 3 hypothesis cards (plain language)
+  html += `<h3>🧪 三個睡眠面向各有多重要</h3>`;
+  html += `<p class="muted" style="margin: 0 0 8px 0;">數據比較：哪一個睡眠特徵最影響你隔天的精神。</p>`;
   html += `<div class="metric-grid">`;
   for (const h of hypotheses) {
-    const status = corrStatus(h.r);
-    const rText = Number.isFinite(h.r) ? `${h.r >= 0 ? "+" : ""}${h.r.toFixed(2)}` : "—";
+    const status = corrStrengthPlain(h.r);
     html += statCard({
-      label: `假設 ${h.id}：${h.name}`,
-      value: rText,
-      subtitle: `partial r　${h.desc}　·　n = ${h.n}`,
-      status, hint: h.hint,
+      label: h.name,
+      value: status.label,
+      subtitle: h.hint + `　·　樣本 ${h.n} 天`,
+      status,
+      hint: h.desc,
     });
   }
   html += `</div>`;
 
-  // Conclusion callout
-  if (Number.isFinite(winner.r) && Math.abs(winner.r) >= 0.15) {
-    html += callout("good",
-      `<strong>結論</strong>　對你而言，<strong>「${winner.name}」</strong>對隔日 HRV 影響最強（partial r = ${winner.r.toFixed(2)}, n = ${winner.n}）。優先優化這個面向，會比追求其他面向更直接看到隔天恢復改善。`);
-  } else {
-    html += callout("warn",
-      `<strong>結論</strong>　三個假設的偏相關都偏弱（|r| < 0.15），可能需要更多資料；或這三個睡眠維度對你的 HRV 都沒單獨突出影響——可以試試看其他變因（運動量 / 壓力）。`);
-  }
-
-  // lag-1 correlation matrix
-  html += `<h3>📋 lag-1 Spearman 相關矩陣</h3>`;
-  html += `<p class="muted">列：昨晚睡眠指標　·　欄：今天的恢復指標。藍 = 正相關，紅 = 負相關。星號 * 代表 p &lt; 0.05。</p>`;
-  let mtxHtml = `<div class="scroll-x"><table class="task-table"><thead><tr><th>　</th>`;
-  for (const [, label] of recoveryKeys) mtxHtml += `<th class="num">${label}</th>`;
-  mtxHtml += `</tr></thead><tbody>`;
-  for (const [_, sLabel, sArr] of sleepKeys) {
-    mtxHtml += `<tr><th>${sLabel}</th>`;
-    for (const [, , rArr, higherBetter] of recoveryKeys) {
-      const { r, p, n } = spearmanPair(sArr, rArr);
-      const sig = Number.isFinite(p) && p < 0.05 ? "*" : "";
-      const txt = Number.isFinite(r)
-        ? `<span style="color:${corrCellColor(r)}">${r >= 0 ? "+" : ""}${r.toFixed(2)}${sig}</span><br><span class="muted" style="font-size:0.7rem">n=${n}</span>`
-        : "—";
-      mtxHtml += `<td class="num">${txt}</td>`;
+  // Action tips for winner (only if winner is meaningful)
+  if (winner.tips && Number.isFinite(winner.r) && Math.abs(winner.r) >= 0.15) {
+    html += `<h3>🎯 你最該優化的：${winner.name}</h3>`;
+    html += `<div class="effects-list">`;
+    for (const tip of winner.tips) {
+      html += `<div class="effect-item good">
+        <div class="effect-body">✓ ${tip}</div>
+      </div>`;
     }
-    mtxHtml += `</tr>`;
+    html += `</div>`;
   }
-  mtxHtml += `</tbody></table></div>`;
-  html += mtxHtml;
 
-  // Sleep score binning boxplot
-  html += `<h3>📊 睡眠分數分箱 → 隔日 HRV 分佈</h3>`;
-  html += `<p class="muted">把昨晚睡眠分數分 4 箱，看隔天 HRV 的分佈。理想：分數越高，HRV 中位數應該越高。</p>`;
-  // Bin summary table (mean per bin)
-  const binRows = binSummary.map((b) =>
-    [b.label, b.n, Number.isFinite(b.mean) ? b.mean.toFixed(1) + " ms" : "—"]);
-  html += tableHtml(["睡眠分數區間", "天數", "隔日 HRV 平均"], binRows, { numCols: [1, 2] });
+  // Sleep score binning boxplot — visual is intuitive, keep it
+  html += `<h3>📊 睡得越好 → 隔天精神越好嗎？</h3>`;
+  html += `<p class="muted">把昨晚的睡眠分數分成 4 段（差 / 普通 / 好 / 很好），看隔天 HRV（精神恢復力）的分佈。如果你睡得越好、隔天 HRV 真的越高 → 圖中柱子應該越往上。</p>`;
+  html += tableHtml(["昨晚睡眠分數", "天數", "隔天精神（平均 HRV）"],
+    binSummary.map((b) => [b.label, b.n, Number.isFinite(b.mean) ? b.mean.toFixed(1) + " ms" : "—"]),
+    { numCols: [1, 2] });
   html += `<div id="t3-box" class="task-chart"></div>`;
 
   container.innerHTML = html;
