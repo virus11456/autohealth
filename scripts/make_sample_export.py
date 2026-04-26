@@ -33,6 +33,37 @@ def record(rtype: str, unit: str, value: str, start: datetime, end: datetime, so
     )
 
 
+def hrv_record(value: float, start: datetime, end: datetime, source="Watch") -> str:
+    """HRV records always carry a HeartRateVariabilityMetadataList child in
+    real Apple Health exports. We emit one here so smoke tests cover the
+    non-self-closing <Record>...</Record> form (the JS regex used to drop
+    these — see commit history)."""
+    return (
+        f'<Record type="HKQuantityTypeIdentifierHeartRateVariabilitySDNN" '
+        f'sourceName="{source}" unit="ms" startDate="{fmt(start)}" '
+        f'endDate="{fmt(end)}" value="{escape(str(value))}">\n'
+        f'  <HeartRateVariabilityMetadataList>\n'
+        f'    <InstantaneousBeatsPerMinute bpm="60" time="{fmt(start)}"/>\n'
+        f'    <InstantaneousBeatsPerMinute bpm="62" time="{fmt(start)}"/>\n'
+        f'  </HeartRateVariabilityMetadataList>\n'
+        f'</Record>'
+    )
+
+
+def record_with_metadata(rtype: str, unit: str, value, start: datetime,
+                         end: datetime, meta_key: str, source="Watch") -> str:
+    """Quantity record wrapping a single MetadataEntry child — exercises the
+    same multi-line <Record>...</Record> form for SpO2/sleep that real
+    exports often produce."""
+    return (
+        f'<Record type="{rtype}" sourceName="{source}" '
+        f'unit="{unit}" startDate="{fmt(start)}" endDate="{fmt(end)}" '
+        f'value="{escape(str(value))}">\n'
+        f'  <MetadataEntry key="{meta_key}" value="1"/>\n'
+        f'</Record>'
+    )
+
+
 def category(rtype: str, value: str, start: datetime, end: datetime, source="Watch") -> str:
     return (
         f'<Record type="{rtype}" sourceName="{source}" '
@@ -115,7 +146,7 @@ for d in range(DAYS):
     lines.append(record("HKQuantityTypeIdentifierDistanceWalkingRunning", "km", round(distance_km, 3), noon, noon + timedelta(minutes=1)))
     lines.append(record("HKQuantityTypeIdentifierFlightsClimbed", "count", flights, noon, noon + timedelta(minutes=1)))
     lines.append(record("HKQuantityTypeIdentifierRestingHeartRate", "count/min", round(resting_hr, 1), noon, noon + timedelta(minutes=1)))
-    lines.append(record("HKQuantityTypeIdentifierHeartRateVariabilitySDNN", "ms", round(max(5, hrv), 1), noon, noon + timedelta(minutes=1)))
+    lines.append(hrv_record(round(max(5, hrv), 1), noon, noon + timedelta(minutes=1)))
     lines.append(record("HKQuantityTypeIdentifierRespiratoryRate", "count/min", round(resp, 1), noon, noon + timedelta(minutes=1)))
     lines.append(record("HKQuantityTypeIdentifierBodyTemperature", "degC", round(body_temp, 2), noon, noon + timedelta(minutes=1)))
     lines.append(record("HKQuantityTypeIdentifierWalkingAsymmetryPercentage", "%", round(walking_asym, 2), noon, noon + timedelta(minutes=1)))
@@ -133,11 +164,24 @@ for d in range(DAYS):
         hr_val = resting_hr + random.uniform(5, 35) + (10 if h == 18 else 0)
         lines.append(record("HKQuantityTypeIdentifierHeartRate", "count/min", round(hr_val, 1), ts, ts + timedelta(seconds=30)))
 
-    # SpO2 readings, including a few during sleep
-    for h in (3, 5, 14):
+    # SpO2 readings, including a few during sleep. The first SpO2 of each day
+    # is emitted with a MetadataEntry child to exercise the non-self-closing
+    # <Record>...</Record> form that real Apple Health exports produce.
+    for i, h in enumerate((3, 5, 14)):
         ts = day.replace(hour=h)
         val = spo2_base + random.gauss(0, 0.6)
-        lines.append(record("HKQuantityTypeIdentifierOxygenSaturation", "%", round(min(100, max(85, val)), 1), ts, ts + timedelta(seconds=30)))
+        clamped = round(min(100, max(85, val)), 1)
+        if i == 0:
+            lines.append(record_with_metadata(
+                "HKQuantityTypeIdentifierOxygenSaturation", "%", clamped,
+                ts, ts + timedelta(seconds=30),
+                meta_key="HKMetadataKeyBackgroundFitnessAppleWatch",
+            ))
+        else:
+            lines.append(record(
+                "HKQuantityTypeIdentifierOxygenSaturation", "%", clamped,
+                ts, ts + timedelta(seconds=30),
+            ))
 
 lines.append("</HealthData>")
 OUT.write_text("\n".join(lines), encoding="utf-8")

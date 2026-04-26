@@ -55,9 +55,13 @@ function parseAttrs(s) {
   return out;
 }
 
-// Match a single self-closing <Record .../> tag. Apple Health writes one per
-// line in practice; if not, we still match across whitespace.
-const RECORD_RE = /<Record\b([^>]*?)\/>/g;
+// Match a <Record> opening tag, whether self-closing or wrapping children.
+// Apple Health emits self-closing <Record .../> for plain readings, but HRV
+// always has <HeartRateVariabilityMetadataList> children, and many SpO2 /
+// sleep / heart-rate records carry <MetadataEntry> children — so we accept
+// both `/>` and `>`. We only need the attributes from the opening tag; any
+// children and the closing </Record> are ignored.
+const RECORD_RE = /<Record\b([^>]*?)\/?>/g;
 
 async function* streamLines(stream) {
   // Yields strings broken at newlines; preserves trailing partial buffer.
