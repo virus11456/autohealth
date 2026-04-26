@@ -11,6 +11,7 @@ from .parser import SUPPORTED_TYPES, metric_index
 # Phase 3 Readiness/Environment scores read these baselines; adding more is cheap.
 BASELINE_METRICS = (
     "resting_hr", "hrv", "respiratory", "sleep_score", "spo2", "daylight",
+    "walking_hr", "wrist_temp_delta_c",
 )
 
 
@@ -72,6 +73,14 @@ def _sleep_daily(sleep: pd.DataFrame) -> pd.DataFrame:
 
     daily["bedtime_offset_min"] = daily["sleep_start"].map(_bedtime_offset)
 
+    # bedtime_hour: 23:30 → 23.5、01:30 → 25.5（24+ 形式方便當作 scalar 用）
+    def _bedtime_hour(ts: pd.Timestamp) -> float:
+        if pd.isna(ts):
+            return np.nan
+        h = ts.hour + ts.minute / 60.0
+        return h + 24 if h < 12 else h
+    daily["bedtime_hour"] = daily["sleep_start"].map(_bedtime_hour).round(2)
+
     # sleep efficiency if we have both in-bed and asleep records
     in_bed_min = grouped.apply(lambda g: g.loc[g["is_in_bed"], "minutes"].sum())
     daily["sleep_efficiency"] = np.where(
@@ -107,10 +116,10 @@ def _hr_derived_daily(hr_df: pd.DataFrame) -> pd.DataFrame:
     s["date"] = s["start"].dt.normalize()
     grouped = s.groupby("date")["value"]
     out = pd.DataFrame({
-        "hr_min": grouped.min(),
-        "hr_max": grouped.max(),
-        "hr_std": grouped.std(ddof=1),
-        "hr_samples": grouped.count().astype("int64"),
+        "heart_rate_min": grouped.min(),
+        "heart_rate_max": grouped.max(),
+        "heart_rate_std": grouped.std(ddof=1),
+        "heart_rate_samples": grouped.count().astype("int64"),
     })
     return out
 

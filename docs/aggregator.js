@@ -3,7 +3,10 @@ import { SUPPORTED_METRICS } from "./parser.js";
 
 // Metrics that get a 30-day rolling baseline + z-score column. Phase 3
 // Readiness/Environment scores read these baselines.
-const BASELINE_METRICS = ["resting_hr", "hrv", "respiratory", "sleep_score", "spo2", "daylight"];
+const BASELINE_METRICS = [
+  "resting_hr", "hrv", "respiratory", "sleep_score", "spo2", "daylight",
+  "walking_hr", "wrist_temp_delta_c",
+];
 
 // "date key" = local YYYY-MM-DD of a Date instance (used as map key)
 function dateKey(d) {
@@ -66,7 +69,7 @@ function hrDerivedDaily(records) {
     const sd = arr.length > 1 ? Math.sqrt(ss / (arr.length - 1)) : 0;
     min.set(k, lo); max.set(k, hi); std.set(k, sd); n.set(k, arr.length);
   }
-  return { hr_min: min, hr_max: max, hr_std: std, hr_samples: n };
+  return { heart_rate_min: min, heart_rate_max: max, heart_rate_std: std, heart_rate_samples: n };
 }
 
 const ASLEEP_STAGES = new Set(["Asleep", "AsleepCore", "AsleepDeep", "AsleepREM", "AsleepUnspecified"]);
@@ -116,6 +119,14 @@ function bedtimeOffset(start) {
   ref.setHours(18, 0, 0, 0);
   if (start.getHours() < 18) ref.setDate(ref.getDate() - 1);
   return (start - ref) / 60000;
+}
+
+// Alternate bedtime form: 23:30 → 23.5, 01:30 → 25.5 (24+ for after-midnight).
+// Matches scripts/parse_health.py canonical schema.
+function bedtimeHour(start) {
+  if (!start) return null;
+  const h = start.getHours() + start.getMinutes() / 60;
+  return Math.round((h < 12 ? h + 24 : h) * 100) / 100;
 }
 
 // SpO2 minimum among readings that fall inside any sleep session, attributed to
@@ -200,7 +211,7 @@ export function buildDailyFrame(parsed) {
     const s = sleepDaily(parsed.sleep);
     const sleepHours = new Map();
     const deep = new Map(), rem = new Map(), awake = new Map();
-    const eff = new Map(), bed = new Map(), score = new Map();
+    const eff = new Map(), bed = new Map(), bedHr = new Map(), score = new Map();
     for (const [k, d] of s) {
       const minutes = d.asleepMin || d.inBedMin;
       sleepHours.set(k, minutes / 60);
@@ -210,6 +221,8 @@ export function buildDailyFrame(parsed) {
       if (d.inBedMin > 0) eff.set(k, d.asleepMin / d.inBedMin);
       const off = bedtimeOffset(d.sleepStart);
       if (off != null) bed.set(k, off);
+      const bh = bedtimeHour(d.sleepStart);
+      if (bh != null) bedHr.set(k, bh);
       const sc = sleepScoreOf(d.asleepMin, d.deepMin, d.remMin);
       if (sc != null) score.set(k, sc);
       allDates.add(k);
@@ -220,6 +233,7 @@ export function buildDailyFrame(parsed) {
     cols.set("sleep_awake_minutes", awake);
     cols.set("sleep_efficiency", eff);
     cols.set("bedtime_offset_min", bed);
+    cols.set("bedtime_hour", bedHr);
     cols.set("sleep_score", score);
 
     if (parsed.quantities?.spo2) {

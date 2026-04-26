@@ -41,6 +41,20 @@ SUPPORTED_TYPES: tuple[MetricSpec, ...] = (
     MetricSpec("walking_asymmetry", "HKQuantityTypeIdentifierWalkingAsymmetryPercentage", "步行不對稱率", "%", "mean"),
     MetricSpec("double_support", "HKQuantityTypeIdentifierWalkingDoubleSupportPercentage", "雙腳支撐時間", "%", "mean"),
     MetricSpec("daylight", "HKQuantityTypeIdentifierTimeInDaylight", "日照時間", "分鐘", "sum"),
+    # New in Phase 5 prep — names align with scripts/parse_health.py canonical schema
+    MetricSpec("hr_recovery_1min", "HKQuantityTypeIdentifierHeartRateRecoveryOneMinute", "1 分鐘心率恢復", "bpm", "mean"),
+    MetricSpec("wrist_temp_delta_c", "HKQuantityTypeIdentifierAppleSleepingWristTemperature", "睡眠手腕溫差", "°C", "mean"),
+    MetricSpec("walking_speed_mps", "HKQuantityTypeIdentifierWalkingSpeed", "步行速度", "m/s", "mean"),
+    MetricSpec("step_length_cm", "HKQuantityTypeIdentifierWalkingStepLength", "步長", "cm", "mean"),
+    MetricSpec("walking_steadiness", "HKQuantityTypeIdentifierAppleWalkingSteadiness", "步行穩定度", "%", "mean"),
+    MetricSpec("six_min_walk_m", "HKQuantityTypeIdentifierSixMinuteWalkTestDistance", "6 分鐘步行距離", "m", "mean"),
+    MetricSpec("basal_kcal", "HKQuantityTypeIdentifierBasalEnergyBurned", "基礎代謝", "kcal", "sum"),
+    MetricSpec("exercise_minutes", "HKQuantityTypeIdentifierAppleExerciseTime", "運動時間", "分鐘", "sum"),
+    MetricSpec("stand_minutes", "HKQuantityTypeIdentifierAppleStandTime", "站立時間", "分鐘", "sum"),
+    MetricSpec("headphone_db", "HKQuantityTypeIdentifierHeadphoneAudioExposure", "耳機音量", "dB", "mean"),
+    MetricSpec("env_audio_db", "HKQuantityTypeIdentifierEnvironmentalAudioExposure", "環境音量", "dB", "mean"),
+    MetricSpec("body_mass_kg", "HKQuantityTypeIdentifierBodyMass", "體重", "kg", "mean"),
+    MetricSpec("bmi", "HKQuantityTypeIdentifierBodyMassIndex", "BMI", "", "mean"),
 )
 
 SLEEP_TYPE = "HKCategoryTypeIdentifierSleepAnalysis"

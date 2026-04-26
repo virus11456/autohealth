@@ -17,9 +17,23 @@ const SUPPORTED = [
   { key: "respiratory",   hk: "HKQuantityTypeIdentifierRespiratoryRate",            label: "呼吸頻率",        unit: "次/分",      agg: "mean" },
   { key: "body_temp",     hk: "HKQuantityTypeIdentifierBodyTemperature",            label: "體溫",            unit: "°C",         agg: "mean" },
   { key: "vo2max",        hk: "HKQuantityTypeIdentifierVO2Max",                     label: "VO2 Max",         unit: "ml/kg·min",  agg: "mean" },
-  { key: "walking_asymmetry", hk: "HKQuantityTypeIdentifierWalkingAsymmetryPercentage",     label: "步行不對稱率",   unit: "%",          agg: "mean" },
-  { key: "double_support",    hk: "HKQuantityTypeIdentifierWalkingDoubleSupportPercentage", label: "雙腳支撐時間",   unit: "%",          agg: "mean" },
-  { key: "daylight",          hk: "HKQuantityTypeIdentifierTimeInDaylight",                 label: "日照時間",       unit: "分鐘",       agg: "sum"  },
+  { key: "walking_asymmetry",  hk: "HKQuantityTypeIdentifierWalkingAsymmetryPercentage",     label: "步行不對稱率",  unit: "%",          agg: "mean" },
+  { key: "double_support",     hk: "HKQuantityTypeIdentifierWalkingDoubleSupportPercentage", label: "雙腳支撐時間",  unit: "%",          agg: "mean" },
+  { key: "daylight",           hk: "HKQuantityTypeIdentifierTimeInDaylight",                 label: "日照時間",      unit: "分鐘",       agg: "sum"  },
+  // New in Phase 5 prep — names align with scripts/parse_health.py canonical schema
+  { key: "hr_recovery_1min",   hk: "HKQuantityTypeIdentifierHeartRateRecoveryOneMinute",     label: "1 分鐘心率恢復", unit: "bpm",        agg: "mean" },
+  { key: "wrist_temp_delta_c", hk: "HKQuantityTypeIdentifierAppleSleepingWristTemperature",  label: "睡眠手腕溫差",  unit: "°C",         agg: "mean" },
+  { key: "walking_speed_mps",  hk: "HKQuantityTypeIdentifierWalkingSpeed",                   label: "步行速度",      unit: "m/s",        agg: "mean" },
+  { key: "step_length_cm",     hk: "HKQuantityTypeIdentifierWalkingStepLength",              label: "步長",          unit: "cm",         agg: "mean" },
+  { key: "walking_steadiness", hk: "HKQuantityTypeIdentifierAppleWalkingSteadiness",         label: "步行穩定度",    unit: "%",          agg: "mean" },
+  { key: "six_min_walk_m",     hk: "HKQuantityTypeIdentifierSixMinuteWalkTestDistance",      label: "6 分鐘步行距離", unit: "m",          agg: "mean" },
+  { key: "basal_kcal",         hk: "HKQuantityTypeIdentifierBasalEnergyBurned",              label: "基礎代謝",      unit: "kcal",       agg: "sum"  },
+  { key: "exercise_minutes",   hk: "HKQuantityTypeIdentifierAppleExerciseTime",              label: "運動時間",      unit: "分鐘",       agg: "sum"  },
+  { key: "stand_minutes",      hk: "HKQuantityTypeIdentifierAppleStandTime",                 label: "站立時間",      unit: "分鐘",       agg: "sum"  },
+  { key: "headphone_db",       hk: "HKQuantityTypeIdentifierHeadphoneAudioExposure",         label: "耳機音量",      unit: "dB",         agg: "mean" },
+  { key: "env_audio_db",       hk: "HKQuantityTypeIdentifierEnvironmentalAudioExposure",     label: "環境音量",      unit: "dB",         agg: "mean" },
+  { key: "body_mass_kg",       hk: "HKQuantityTypeIdentifierBodyMass",                       label: "體重",          unit: "kg",         agg: "mean" },
+  { key: "bmi",                hk: "HKQuantityTypeIdentifierBodyMassIndex",                  label: "BMI",           unit: "",           agg: "mean" },
 ];
 
 const SLEEP_HK = "HKCategoryTypeIdentifierSleepAnalysis";

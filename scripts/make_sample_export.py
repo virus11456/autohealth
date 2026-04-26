@@ -103,6 +103,28 @@ for d in range(DAYS):
     double_support = max(20.0, 26.0 + 0.6 * walking_asym + random.gauss(0, 1.2))
     daylight_min = max(0, 45 + 12 * (sleep_hours - 7) - 25 * (weekday >= 5) + random.gauss(0, 12))
 
+    # Phase 5 prep metrics — synthetic with reasonable correlations
+    # Walking speed degrades with overload; step length tracks speed
+    walking_speed = max(0.6, 1.30 - 0.15 * overload + random.gauss(0, 0.06))
+    step_length = max(40, 70 + 18 * (walking_speed - 1.30) + random.gauss(0, 4))
+    walking_steady = max(40, 90 - 10 * overload + random.gauss(0, 3))  # %
+    # Wrist temperature delta: tiny daily noise around baseline; spike on illness day
+    wrist_temp = random.gauss(0, 0.18)
+    if d == 80:
+        wrist_temp += 0.9   # planted illness day → temp deviates ~+1°C
+    # HR recovery: athletes recover faster (higher number = bpm dropped in 1 min)
+    hr_recovery = max(8, 28 - 4 * trend + random.gauss(0, 3))
+    # Energy / movement
+    basal = 1450 + random.gauss(0, 60)
+    exercise_min = max(0, 35 + 20 * (steps > 9000) + random.gauss(0, 12))
+    stand_min = max(0, 12 + random.gauss(0, 2))   # hours, will scale
+    # Audio exposure (urban resident)
+    env_audio = max(45, 62 + random.gauss(0, 4))
+    headphone = max(40, 70 + random.gauss(0, 5))
+    # Body composition: slow weight drift
+    body_mass = 70 - 1.5 * trend + random.gauss(0, 0.3)
+    bmi_val = body_mass / (1.75 ** 2)
+
     # inject a couple of clear anomalies
     if d == 80:
         resting_hr += 12
@@ -152,6 +174,20 @@ for d in range(DAYS):
     lines.append(record("HKQuantityTypeIdentifierWalkingAsymmetryPercentage", "%", round(walking_asym, 2), noon, noon + timedelta(minutes=1)))
     lines.append(record("HKQuantityTypeIdentifierWalkingDoubleSupportPercentage", "%", round(double_support, 2), noon, noon + timedelta(minutes=1)))
 
+    # Phase 5 prep: gait, body, energy, environment, recovery
+    lines.append(record("HKQuantityTypeIdentifierWalkingSpeed", "m/s", round(walking_speed, 3), noon, noon + timedelta(minutes=1)))
+    lines.append(record("HKQuantityTypeIdentifierWalkingStepLength", "cm", round(step_length, 1), noon, noon + timedelta(minutes=1)))
+    lines.append(record("HKQuantityTypeIdentifierAppleWalkingSteadiness", "%", round(walking_steady, 1), noon, noon + timedelta(minutes=1)))
+    lines.append(record("HKQuantityTypeIdentifierAppleSleepingWristTemperature", "degC", round(wrist_temp, 3), day.replace(hour=4), day.replace(hour=4, minute=30)))
+    lines.append(record("HKQuantityTypeIdentifierHeartRateRecoveryOneMinute", "count/min", round(hr_recovery, 0), noon, noon + timedelta(minutes=1)))
+    lines.append(record("HKQuantityTypeIdentifierBasalEnergyBurned", "kcal", round(basal, 0), noon, noon + timedelta(minutes=1)))
+    lines.append(record("HKQuantityTypeIdentifierAppleExerciseTime", "min", round(exercise_min, 0), noon, noon + timedelta(minutes=1)))
+    lines.append(record("HKQuantityTypeIdentifierAppleStandTime", "min", round(stand_min * 60, 0), noon, noon + timedelta(minutes=1)))
+    lines.append(record("HKQuantityTypeIdentifierEnvironmentalAudioExposure", "dBASPL", round(env_audio, 1), noon, noon + timedelta(minutes=1)))
+    lines.append(record("HKQuantityTypeIdentifierHeadphoneAudioExposure", "dBASPL", round(headphone, 1), noon, noon + timedelta(minutes=1)))
+    lines.append(record("HKQuantityTypeIdentifierBodyMass", "kg", round(body_mass, 2), noon, noon + timedelta(minutes=1)))
+    lines.append(record("HKQuantityTypeIdentifierBodyMassIndex", "count", round(bmi_val, 2), noon, noon + timedelta(minutes=1)))
+
     # daylight: split across two outdoor windows so the parser sums multiple records
     morning = day.replace(hour=10)
     afternoon = day.replace(hour=15)
@@ -163,6 +199,12 @@ for d in range(DAYS):
         ts = day.replace(hour=h)
         hr_val = resting_hr + random.uniform(5, 35) + (10 if h == 18 else 0)
         lines.append(record("HKQuantityTypeIdentifierHeartRate", "count/min", round(hr_val, 1), ts, ts + timedelta(seconds=30)))
+
+    # Walking heart rate average (Apple Watch derived) — tracks resting_hr but
+    # offset higher; needed so walking_hr baseline + cardio progression analyses
+    # have data to chew on.
+    walking_hr = resting_hr + 35 + random.gauss(0, 4)
+    lines.append(record("HKQuantityTypeIdentifierWalkingHeartRateAverage", "count/min", round(walking_hr, 1), noon, noon + timedelta(minutes=1)))
 
     # SpO2 readings, including a few during sleep. The first SpO2 of each day
     # is emitted with a MetadataEntry child to exercise the non-self-closing
