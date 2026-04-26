@@ -146,7 +146,9 @@ async function loadFile(file) {
       state.frame.rows[i].env_stress = envStress[i];
     }
     state.frame.columns.push("readiness", "env_stress");
-    progressEl.style.width = "100%";
+    bar.classList.remove("indeterminate");
+    fill.style.width = "100%";
+    pctEl.textContent = "100%";
     textEl.textContent = `完成：${state.frame.rows.length} 天，${state.frame.columns.length} 個指標`;
     initDashboard();
   } catch (err) {
