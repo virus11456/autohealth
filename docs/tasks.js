@@ -648,54 +648,6 @@ export function renderTask2(frame, container) {
   const rhrZ = columnValues(frame, "resting_hr_zscore30");
   const walkingZ = columnValues(frame, "walking_hr_zscore30");
 
-  // Fatigue days: HRV ↓ AND RHR ↑ AND walking_HR ↑ — the "三者反向" pattern
-  // the brief calls accumulated fatigue / pre-illness signal.
-  const fatigueDays = [];
-  for (let i = 0; i < frame.rows.length; i++) {
-    if (Number.isFinite(hrvZ[i]) && Number.isFinite(rhrZ[i]) && Number.isFinite(walkingZ[i]) &&
-        hrvZ[i] < -1 && rhrZ[i] > 1 && walkingZ[i] > 1) {
-      fatigueDays.push({
-        date: frame.rows[i].date,
-        hrv: hrv[i], rhr: rhr[i], walking: walking[i],
-        hrvZ: hrvZ[i], rhrZ: rhrZ[i], walkingZ: walkingZ[i],
-      });
-    }
-  }
-
-  // Super-recovery days: HRV high + RHR low. Look at that day's sleep features
-  // (which represent the previous night's sleep ending in the morning).
-  const superDays = [];
-  for (let i = 0; i < frame.rows.length; i++) {
-    if (Number.isFinite(hrvZ[i]) && Number.isFinite(rhrZ[i]) &&
-        hrvZ[i] > 1 && rhrZ[i] < -1) {
-      const r = frame.rows[i];
-      superDays.push({
-        date: r.date,
-        hrv: hrv[i], rhr: rhr[i],
-        hrvZ: hrvZ[i], rhrZ: rhrZ[i],
-        sleepScore: r.sleep_score,
-        sleepHours: r.sleep_hours,
-        deepMin: r.sleep_deep_minutes,
-        remMin: r.sleep_rem_minutes,
-      });
-    }
-  }
-
-  // Compare super-recovery sleep stats vs overall: helps see if the pattern
-  // really has anything in common (e.g., longer sleep, more deep).
-  const overallSleep = {
-    score: meanFinite(columnValues(frame, "sleep_score")),
-    hours: meanFinite(columnValues(frame, "sleep_hours")),
-    deep:  meanFinite(columnValues(frame, "sleep_deep_minutes")),
-    rem:   meanFinite(columnValues(frame, "sleep_rem_minutes")),
-  };
-  const superSleep = superDays.length ? {
-    score: meanFinite(superDays.map((d) => d.sleepScore)),
-    hours: meanFinite(superDays.map((d) => d.sleepHours)),
-    deep:  meanFinite(superDays.map((d) => d.deepMin)),
-    rem:   meanFinite(superDays.map((d) => d.remMin)),
-  } : null;
-
   // ---- Today's verdict (computed from latest day where these metrics exist) ----
   const todayIdx = Math.max(lastFiniteIdx(hrv), lastFiniteIdx(rhr), lastFiniteIdx(walking));
   const tRow = todayIdx >= 0 ? frame.rows[todayIdx] : null;
@@ -788,60 +740,100 @@ export function renderTask2(frame, container) {
   html += `<p class="muted" style="margin: 0 0 8px 0;">用每日數值算 Spearman 排序相關（對非線性 / 離群值穩健）。藍 = 正相關，紅 = 負相關。健康狀況下：HRV ↔ RHR 應該是負，HRV ↔ 步行 HR 應該是負，RHR ↔ 步行 HR 應該是正。</p>`;
   html += corrMatrixHtml(["HRV", "靜息 HR", "步行 HR"], [hrv, rhr, walking]);
 
-  // Fatigue days
-  html += `<h3>⚠ 典型疲勞日（HRV z &lt; -1 且 RHR z &gt; +1 且 步行 HR z &gt; +1）</h3>`;
-  if (!fatigueDays.length) {
-    html += `<p class="muted">沒有偵測到符合條件的累積疲勞日。資料期間內身體大多還在 OK 範圍，或單一指標惡化但沒三者同時。</p>`;
+  // ---- 最近 7 天會不會生病 ----
+  // Scan the last 7 finite-z days. A "bad" day = ≥ 2 of HRV / RHR / walking_HR
+  // pointing in the wrong direction (HRV low, RHR high, walking_HR high).
+  // Cluster of consecutive bad days = real warning.
+  const recentLookback = 7;
+  let badDays = 0, maxConsecutive = 0, curConsecutive = 0;
+  let evaluatedDays = 0;
+  for (let i = Math.max(0, frame.rows.length - recentLookback); i < frame.rows.length; i++) {
+    const r = frame.rows[i];
+    const hZ = r.hrv_zscore30, rZ = r.resting_hr_zscore30, wZ = r.walking_hr_zscore30;
+    if (![hZ, rZ, wZ].some(Number.isFinite)) continue;
+    evaluatedDays++;
+    let bad = 0;
+    if (Number.isFinite(hZ) && hZ < -0.5) bad++;
+    if (Number.isFinite(rZ) && rZ > 0.5) bad++;
+    if (Number.isFinite(wZ) && wZ > 0.5) bad++;
+    if (bad >= 2) {
+      badDays++; curConsecutive++;
+      if (curConsecutive > maxConsecutive) maxConsecutive = curConsecutive;
+    } else {
+      curConsecutive = 0;
+    }
+  }
+  let illness;
+  if (evaluatedDays === 0) {
+    illness = { cls: "empty", emoji: "⚪", headline: "最近沒資料",
+      detail: "最近 7 天三個訊號都還沒讀到，無法判斷。" };
+  } else if (maxConsecutive >= 3) {
+    illness = {
+      cls: "alert", emoji: "🔴",
+      headline: "可能 1-2 天內會感覺不舒服",
+      detail: `最近 7 天裡有 ${maxConsecutive} 天連續訊號都偏壞——這常常比身體真的不舒服早 1-2 天出現。`,
+      action: "立刻減量、提早休息、多補水。如果症狀真的出現，要好好休息或看醫生。",
+    };
+  } else if (badDays >= 3) {
+    illness = {
+      cls: "low", emoji: "🟡",
+      headline: "有點訊號偏離平常",
+      detail: `最近 7 天裡有 ${badDays} 天訊號偏壞，但還沒形成連續警訊。`,
+      action: "今晚早點睡 + 多喝水，明後天再看一次有沒有變嚴重。",
+    };
   } else {
-    html += `<p class="muted" style="margin:0 0 8px 0;">三個訊號同時偏離個人基線，常常比體感早 1-2 天出現。建議手動回想當週的工作量 / 訓練 / 睡眠 / 壓力。</p>`;
-    const rows = fatigueDays.slice(-50).reverse().map((d) => [
-      d.date,
-      `${d.hrv.toFixed(1)} ms ${fmtZ(d.hrvZ, true)}`,
-      `${d.rhr.toFixed(0)} bpm ${fmtZ(d.rhrZ, false)}`,
-      `${d.walking.toFixed(0)} bpm ${fmtZ(d.walkingZ, false)}`,
-    ]);
-    html += tableHtml(["日期", "HRV", "靜息 HR", "步行 HR"], rows, { numCols: [1, 2, 3] });
-    if (fatigueDays.length > 50) {
-      html += `<p class="muted">（顯示最近 50 筆，共 ${fatigueDays.length} 筆）</p>`;
+    illness = {
+      cls: "good", emoji: "🟢",
+      headline: "最近沒有生病警訊",
+      detail: `看了最近 ${evaluatedDays} 天，訊號穩定，沒有累積疲勞或感冒前兆。`,
+      action: "維持現狀就好。",
+    };
+  }
+  html += `<h3>🤒 最近 7 天會不會生病</h3>`;
+  html += verdictPanel(illness);
+
+  // ---- 心率訊號對身體的影響 ----
+  const tIdx = lastFiniteIdx(hrv) >= 0 ? lastFiniteIdx(hrv) :
+               lastFiniteIdx(rhr) >= 0 ? lastFiniteIdx(rhr) :
+               lastFiniteIdx(walking);
+  const tr = tIdx >= 0 ? frame.rows[tIdx] : null;
+  const effects = [];
+  if (tr) {
+    const hZ = tr.hrv_zscore30;
+    const rZ = tr.resting_hr_zscore30;
+    const wZ = tr.walking_hr_zscore30;
+    if (Number.isFinite(hZ)) {
+      if (hZ > 0.5) effects.push({ kind: "good", title: "💚 心跳變化（HRV）比平常高",
+        body: "身體很放鬆、自我修復狀態好。今天做事、運動、決策都會比較順、情緒也穩定。" });
+      else if (hZ < -0.5) effects.push({ kind: "bad", title: "⚠ 心跳變化（HRV）比平常低",
+        body: "身體比較緊繃，恢復速度變慢。可能會比較煩躁、容易發脾氣、做決定可能衝動。建議今天別碰太重要的決定。" });
+    }
+    if (Number.isFinite(rZ)) {
+      if (rZ < -0.5) effects.push({ kind: "good", title: "💚 靜息心率比平常低",
+        body: "心臟運作很有效率，睡眠 / 運動 / 飲食最近都顧得不錯。" });
+      else if (rZ > 0.5) effects.push({ kind: "bad", title: "⚠ 靜息心率比平常高",
+        body: "心臟在加班——常見原因：壓力大、水喝不夠、咖啡因 / 酒精太多、輕微發炎或感冒前兆、睡眠品質差。" });
+    }
+    if (Number.isFinite(wZ)) {
+      if (wZ < -0.5) effects.push({ kind: "good", title: "💚 走路心跳比平常低",
+        body: "心肺體能正在進步——同樣的活動更省力。" });
+      else if (wZ > 0.5) effects.push({ kind: "bad", title: "⚠ 走路心跳比平常高",
+        body: "同樣的活動消耗更多體力——可能是太久沒運動、訓練累積疲勞，或是身體在打感冒。" });
     }
   }
 
-  // Super-recovery days
-  html += `<h3>✨ 典型超恢復日（HRV z &gt; +1 且 RHR z &lt; -1）</h3>`;
-  if (!superDays.length) {
-    html += `<p class="muted">資料期間內沒有同時 HRV 高 + RHR 低的「超恢復日」。</p>`;
+  html += `<h3>💡 心跳訊號現在對你身體的影響</h3>`;
+  if (!effects.length) {
+    html += `<p class="muted">三個訊號都接近平常水準，今天沒有特別偏離的影響。</p>`;
   } else {
-    if (superSleep) {
-      const dHours = superSleep.hours - overallSleep.hours;
-      const dDeep = superSleep.deep - overallSleep.deep;
-      const dRem = superSleep.rem - overallSleep.rem;
-      const dScore = superSleep.score - overallSleep.score;
-      html += callout("good",
-        `<strong>超恢復日的睡眠特徵</strong>（共 ${superDays.length} 天）<br>` +
-        `這些日子的當晚 / 前一晚睡眠表現對比整體平均：<br>` +
-        `<span class="muted">睡眠時數</span> ${superSleep.hours?.toFixed(1) ?? "—"}h ` +
-        `<strong style="color:${dHours >= 0 ? "var(--good)" : "var(--bad)"}">(${dHours >= 0 ? "+" : ""}${dHours?.toFixed(1) ?? "—"}h vs 平均)</strong>　·　` +
-        `<span class="muted">深睡</span> ${superSleep.deep?.toFixed(0) ?? "—"} 分 ` +
-        `<strong style="color:${dDeep >= 0 ? "var(--good)" : "var(--bad)"}">(${dDeep >= 0 ? "+" : ""}${dDeep?.toFixed(0) ?? "—"} 分)</strong>　·　` +
-        `<span class="muted">REM</span> ${superSleep.rem?.toFixed(0) ?? "—"} 分 ` +
-        `<strong style="color:${dRem >= 0 ? "var(--good)" : "var(--bad)"}">(${dRem >= 0 ? "+" : ""}${dRem?.toFixed(0) ?? "—"} 分)</strong>　·　` +
-        `<span class="muted">睡眠分數</span> ${superSleep.score?.toFixed(0) ?? "—"} ` +
-        `<strong style="color:${dScore >= 0 ? "var(--good)" : "var(--bad)"}">(${dScore >= 0 ? "+" : ""}${dScore?.toFixed(0) ?? "—"})</strong>`);
+    html += `<div class="effects-list">`;
+    for (const e of effects) {
+      html += `<div class="effect-item ${e.kind}">
+        <div class="effect-title">${e.title}</div>
+        <div class="effect-body">${e.body}</div>
+      </div>`;
     }
-    const rows = superDays.slice(-50).reverse().map((d) => [
-      d.date,
-      `${d.hrv.toFixed(1)} ms ${fmtZ(d.hrvZ, true)}`,
-      `${d.rhr.toFixed(0)} bpm ${fmtZ(d.rhrZ, false)}`,
-      Number.isFinite(d.sleepScore) ? d.sleepScore.toFixed(0) : "—",
-      Number.isFinite(d.sleepHours) ? d.sleepHours.toFixed(1) + "h" : "—",
-      Number.isFinite(d.deepMin) ? d.deepMin.toFixed(0) + "m" : "—",
-      Number.isFinite(d.remMin) ? d.remMin.toFixed(0) + "m" : "—",
-    ]);
-    html += tableHtml(["日期", "HRV", "靜息 HR", "睡眠分數", "睡眠時長", "深睡", "REM"], rows,
-      { numCols: [1, 2, 3, 4, 5, 6] });
-    if (superDays.length > 50) {
-      html += `<p class="muted">（顯示最近 50 筆，共 ${superDays.length} 筆）</p>`;
-    }
+    html += `</div>`;
   }
 
   container.innerHTML = html;

@@ -140,6 +140,17 @@ main { padding: 24px; max-width: 1400px; margin: 0 auto; }
 }
 .task-verdict-action::before { content: "→ "; color: var(--accent); }
 
+/* Plain-language effects list (Task 2 "心跳訊號對身體的影響") */
+.effects-list { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 12px 0; }
+.effect-item {
+  padding: 10px 14px; border-radius: 6px;
+  border-left: 3px solid var(--info); background: rgba(255,255,255,0.02);
+}
+.effect-item.good { border-left-color: var(--good); }
+.effect-item.bad  { border-left-color: var(--warn); }
+.effect-title { font-weight: 600; margin-bottom: 4px; font-size: 0.95rem; }
+.effect-body { font-size: 0.88rem; color: var(--muted); line-height: 1.55; }
+
 /* Data health inside settings modal */
 .data-health-inline { font-size: 0.88rem; }
 .data-health-inline h2.task-title { font-size: 1rem; margin-top: 4px; }
