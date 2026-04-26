@@ -515,64 +515,79 @@ function drawMetricChart(divId, dates, raw, smooth, color, opts = {}) {
   }, { displaylogo: false, responsive: true, displayModeBar: false });
 }
 
-// 3-panel combined chart for the Readiness triangle. Stacks HRV / RHR /
-// walking_HR with a shared x-axis so the user can scan vertically and tell
-// whether all three are moving in the "good" direction simultaneously
-// (= recovering / fitter) or all in the "bad" direction (= fatigue / sick).
+// One-chart triangle view: each signal converted to "deviation in the good
+// direction" (HRV up = +; RHR / walking_HR down = +) in standard-deviation
+// units, then all three overlaid on a shared y-axis. Read horizontally:
+// all three lines below 0 = body in trouble. Above 0 = recovering.
 function drawTriangleCombined(divId, dates, hrv, rhr, walking) {
   const div = document.getElementById(divId);
   if (!div || typeof Plotly === "undefined") return;
-  const hrvBase = meanFinite(hrv);
-  const rhrBase = meanFinite(rhr);
-  const walkBase = meanFinite(walking);
-  const hrvSm = rollingMean(hrv, 30);
-  const rhrSm = rollingMean(rhr, 30);
-  const walkSm = rollingMean(walking, 30);
+
+  const hrvMean = meanFinite(hrv),    hrvStd = stdFinite(hrv);
+  const rhrMean = meanFinite(rhr),    rhrStd = stdFinite(rhr);
+  const walkMean = meanFinite(walking), walkStd = stdFinite(walking);
+
+  // Map each value to "good-direction z" so + always = good
+  const hrvG  = hrv.map((v)     => Number.isFinite(v) && hrvStd  > 0 ?  (v - hrvMean)  / hrvStd  : NaN);
+  const rhrG  = rhr.map((v)     => Number.isFinite(v) && rhrStd  > 0 ? -(v - rhrMean)  / rhrStd  : NaN);
+  const walkG = walking.map((v) => Number.isFinite(v) && walkStd > 0 ? -(v - walkMean) / walkStd : NaN);
+
+  const hrvGSm  = rollingMean(hrvG, 30);
+  const rhrGSm  = rollingMean(rhrG, 30);
+  const walkGSm = rollingMean(walkG, 30);
 
   const traces = [
-    { x: dates, y: hrv, mode: "lines+markers", type: "scatter",
-      line: { width: 1.4, color: "#34c38f" }, marker: { size: 3, color: "#34c38f" },
-      name: "心跳變化 HRV", connectgaps: false, xaxis: "x", yaxis: "y",
-      hovertemplate: "%{x}<br>HRV %{y:.1f} ms<extra></extra>" },
-    { x: dates, y: hrvSm, mode: "lines", type: "scatter",
+    { x: dates, y: hrvG, mode: "lines+markers", type: "scatter",
+      line: { width: 1.3, color: "#34c38f" }, marker: { size: 3, color: "#34c38f" },
+      name: "心跳變化 HRV", connectgaps: false,
+      hovertemplate: "%{x}<br>HRV：比平常好 %{y:.2f} 個標準差<extra></extra>" },
+    { x: dates, y: hrvGSm, mode: "lines", type: "scatter",
       line: { width: 2.5, color: "#34c38f" }, opacity: 0.55, showlegend: false,
-      xaxis: "x", yaxis: "y", hoverinfo: "skip" },
-    { x: dates, y: rhr, mode: "lines+markers", type: "scatter",
-      line: { width: 1.4, color: "#ef4444" }, marker: { size: 3, color: "#ef4444" },
-      name: "靜息心率", connectgaps: false, xaxis: "x", yaxis: "y2",
-      hovertemplate: "%{x}<br>RHR %{y:.0f} bpm<extra></extra>" },
-    { x: dates, y: rhrSm, mode: "lines", type: "scatter",
+      hoverinfo: "skip" },
+    { x: dates, y: rhrG, mode: "lines+markers", type: "scatter",
+      line: { width: 1.3, color: "#ef4444" }, marker: { size: 3, color: "#ef4444" },
+      name: "靜息心率 (低 = 好)", connectgaps: false,
+      hovertemplate: "%{x}<br>靜息心率：比平常好 %{y:.2f} 個標準差<extra></extra>" },
+    { x: dates, y: rhrGSm, mode: "lines", type: "scatter",
       line: { width: 2.5, color: "#ef4444" }, opacity: 0.55, showlegend: false,
-      xaxis: "x", yaxis: "y2", hoverinfo: "skip" },
-    { x: dates, y: walking, mode: "lines+markers", type: "scatter",
-      line: { width: 1.4, color: "#f0a020" }, marker: { size: 3, color: "#f0a020" },
-      name: "走路心跳", connectgaps: false, xaxis: "x", yaxis: "y3",
-      hovertemplate: "%{x}<br>走路 HR %{y:.0f} bpm<extra></extra>" },
-    { x: dates, y: walkSm, mode: "lines", type: "scatter",
+      hoverinfo: "skip" },
+    { x: dates, y: walkG, mode: "lines+markers", type: "scatter",
+      line: { width: 1.3, color: "#f0a020" }, marker: { size: 3, color: "#f0a020" },
+      name: "走路心跳 (低 = 好)", connectgaps: false,
+      hovertemplate: "%{x}<br>走路心跳：比平常好 %{y:.2f} 個標準差<extra></extra>" },
+    { x: dates, y: walkGSm, mode: "lines", type: "scatter",
       line: { width: 2.5, color: "#f0a020" }, opacity: 0.55, showlegend: false,
-      xaxis: "x", yaxis: "y3", hoverinfo: "skip" },
+      hoverinfo: "skip" },
   ];
-  const dashLine = (yref, val) => Number.isFinite(val) ? {
-    type: "line", xref: "paper", x0: 0, x1: 1, y0: val, y1: val, yref,
-    line: { color: "rgba(255,255,255,0.30)", width: 1, dash: "dash" },
-  } : null;
   Plotly.newPlot(div, traces, {
     paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
     font: { color: "#e6e9ef", family: "inherit", size: 11 },
     margin: { l: 60, r: 20, t: 30, b: 40 },
-    xaxis: { domain: [0, 1], anchor: "y3",
-             gridcolor: "rgba(127,127,127,0.08)", tickfont: { size: 10 } },
-    yaxis:  { domain: [0.70, 1.00], gridcolor: "rgba(127,127,127,0.08)",
-              title: { text: "HRV (ms)　好↑", font: { size: 10 } } },
-    yaxis2: { domain: [0.37, 0.65], gridcolor: "rgba(127,127,127,0.08)",
-              title: { text: "靜息心跳 (bpm)　好↓", font: { size: 10 } } },
-    yaxis3: { domain: [0.00, 0.28], gridcolor: "rgba(127,127,127,0.08)",
-              title: { text: "走路心跳 (bpm)　好↓", font: { size: 10 } } },
-    shapes: [dashLine("y", hrvBase), dashLine("y2", rhrBase), dashLine("y3", walkBase)].filter(Boolean),
-    height: 540,
+    xaxis: { gridcolor: "rgba(127,127,127,0.08)", tickfont: { size: 10 } },
+    yaxis: {
+      gridcolor: "rgba(127,127,127,0.08)",
+      title: { text: "比平常好（↑） / 差（↓） · 標準差為單位", font: { size: 10 } },
+      zeroline: true, zerolinecolor: "rgba(255,255,255,0.35)", zerolinewidth: 1,
+    },
+    // Reference dotted lines at +1 (good) and -1 (warning) sigma
+    shapes: [
+      { type: "line", xref: "paper", x0: 0, x1: 1, y0:  1, y1:  1,
+        line: { color: "rgba(52,195,143,0.30)", width: 1, dash: "dot" } },
+      { type: "line", xref: "paper", x0: 0, x1: 1, y0: -1, y1: -1,
+        line: { color: "rgba(239,68,68,0.30)",  width: 1, dash: "dot" } },
+    ],
+    annotations: [
+      { x: 1, y:  1, xref: "paper", yref: "y", xanchor: "right", yanchor: "bottom",
+        text: "好的方向", showarrow: false,
+        font: { color: "rgba(52,195,143,0.7)", size: 9 } },
+      { x: 1, y: -1, xref: "paper", yref: "y", xanchor: "right", yanchor: "top",
+        text: "警戒線", showarrow: false,
+        font: { color: "rgba(239,68,68,0.7)", size: 9 } },
+    ],
+    height: 380,
     hovermode: "x unified",
     showlegend: true,
-    legend: { orientation: "h", y: 1.05, x: 0.5, xanchor: "center" },
+    legend: { orientation: "h", y: 1.10, x: 0.5, xanchor: "center" },
     hoverlabel: HOVER_LABEL,
   }, { displaylogo: false, responsive: true });
 }
@@ -735,11 +750,11 @@ export function renderTask2(frame, container) {
   });
   html += `</div>`;
 
-  // Combined 3-panel view — same x-axis, three independent y-axes.
-  // Reads vertically: at any date, are all three lines on the "good" side of
-  // their dashed personal-baseline? If yes → recovery. All on "bad" side → fatigue.
+  // Combined view — all three signals normalised so "good direction = up".
+  // Lines all above zero = three signals all pointing in good direction; all
+  // below zero = three signals all pointing in bad direction (fatigue / sick).
   html += `<h3>🔄 三個訊號疊在一起看</h3>`;
-  html += `<p class="muted" style="margin:0 0 8px 0;">虛線是「你個人的平均」。理想：HRV 在虛線上面、靜息心跳在虛線下面、走路心跳在虛線下面（=三個都在好的方向）。如果三個同時跑到「不好的那邊」，就要小心是不是太累或快感冒。</p>`;
+  html += `<p class="muted" style="margin:0 0 8px 0;">把三個訊號都換算成「比平常好（往上）/ 差（往下）」。零線就是你的個人平均。<strong>三條線都跑到零線下方</strong> = 三個都比平常差，要小心是不是太累 / 快感冒。<strong>都跑到上方</strong> = 三個都好，狀態進步中。</p>`;
   html += `<div id="t2-combined" class="task-chart"></div>`;
 
   // Correlation matrix on RAW values (Spearman is rank-based; z-score
