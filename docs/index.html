@@ -70,8 +70,7 @@
 
   <div class="card">
     <div class="tabs">
-      <button class="tab active" data-tab="tab-task1">🩺 1 健檢</button>
-      <button class="tab" data-tab="tab-task2">🔋 2 三角</button>
+      <button class="tab active" data-tab="tab-task2">🔋 2 三角</button>
       <button class="tab" data-tab="tab-task3">💤 3 睡眠</button>
       <button class="tab" data-tab="tab-task4">🚶 4 步態</button>
       <button class="tab" data-tab="tab-task5">🌅 5 節律</button>
@@ -80,8 +79,7 @@
       <button class="tab" data-tab="tab-ai">✨ AI 解讀</button>
     </div>
 
-    <div id="tab-task1" class="tab-content active task-pane"></div>
-    <div id="tab-task2" class="tab-content task-pane"></div>
+    <div id="tab-task2" class="tab-content active task-pane"></div>
     <div id="tab-task3" class="tab-content task-pane"></div>
     <div id="tab-task4" class="tab-content task-pane"></div>
     <div id="tab-task5" class="tab-content task-pane"></div>
@@ -147,6 +145,17 @@
         <button class="primary" id="cfgSave">儲存</button>
       </div>
       <div id="cfgTestResult" class="cfg-test-result"></div>
+
+      <hr style="margin: 24px 0; border: 0; border-top: 1px solid var(--border);">
+
+      <h3>📋 資料健檢</h3>
+      <div class="muted" style="margin-bottom:8px;">
+        確認 export 解析後的資料品質，找出資料密度斷層、離群值，並建議「分析黃金窗口」。
+        關閉設定面板再打開可重新計算。
+      </div>
+      <div id="dataHealthInline" class="data-health-inline">
+        <p class="muted">尚未上傳資料。</p>
+      </div>
     </div>
   </div>
 </div>

@@ -15,7 +15,7 @@ const state = {
   parsed: null,
   frame: null,        // full parsed frame (date-unfiltered)
   filtered: null,     // current date-filtered frame (used by tasks 2-7)
-  activeTab: "tab-task1",
+  activeTab: "tab-task2",
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -170,7 +170,6 @@ function renderActiveTab() {
   const container = $("#" + id);
   if (!container) return;
   switch (id) {
-    case "tab-task1": renderTask1(state.frame, container); break;
     case "tab-task2": renderTask2(state.filtered, container); break;
     case "tab-task3": renderTask3(state.filtered, container); break;
     case "tab-task4": renderTask4(state.filtered, container); break;
@@ -192,6 +191,15 @@ function setupSettingsModal() {
     $("#cfgModel").value = s.model;
     $("#cfgGroupId").value = s.groupId;
     $("#cfgTestResult").classList.remove("show", "ok", "fail");
+    // Render data health inline if data has been loaded
+    const dh = $("#dataHealthInline");
+    if (dh) {
+      if (state.frame && state.frame.rows.length) {
+        renderTask1(state.frame, dh);
+      } else {
+        dh.innerHTML = '<p class="muted">尚未上傳資料。先關閉設定 → 上傳 export.zip → 再打開這裡看健檢結果。</p>';
+      }
+    }
     modal.style.display = "flex";
   };
   const close = () => { modal.style.display = "none"; };

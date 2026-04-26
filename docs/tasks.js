@@ -396,18 +396,44 @@ function lastFiniteIdx(arr) {
   return -1;
 }
 
-// Metric card with embedded sparkline. The card is self-contained: pass
-// dates + raw + smooth arrays plus today's z-score and the card decides the
-// big number / delta / status pill. Chart renders into a child div whose id
-// is `chartId` once the card is in the DOM.
-function metricCard({ chartId, label, unit, dates, raw, smooth, baselineLabel = "30 天基線",
+// Metric card with embedded sparkline.
+//
+// Baseline + z-score resolution order (most accurate → fallback):
+//   1. Pre-computed `${baselineKey}_baseline30` / `_zscore30` from frame rows
+//      (computed by aggregator with min_periods=7 over the FULL frame, so
+//      survives sparse data and date filtering)
+//   2. Rolling mean over the passed-in (already date-filtered) raw array
+//   3. Overall mean / std over the passed-in raw array (last resort —
+//      labelled differently in the UI)
+function metricCard({ chartId, label, unit, dates, raw, smooth, frameRows, baselineKey,
                      higherIsBetter = true, hint = "" }) {
   const i = lastFiniteIdx(raw);
   const value = i >= 0 ? raw[i] : NaN;
-  const baseline = i >= 0 ? smooth[i] : NaN;
-  const std = stdFinite(raw);
-  const z = (Number.isFinite(value) && Number.isFinite(baseline) && Number.isFinite(std) && std > 0)
-    ? (value - baseline) / std : NaN;
+
+  // Try pre-computed columns first
+  let baseline = NaN, z = NaN, mode = "none";
+  if (frameRows && baselineKey && i >= 0) {
+    const row = frameRows[i];
+    const preBaseline = row?.[`${baselineKey}_baseline30`];
+    const preZ = row?.[`${baselineKey}_zscore30`];
+    if (Number.isFinite(preBaseline)) { baseline = preBaseline; mode = "rolling30"; }
+    if (Number.isFinite(preZ)) z = preZ;
+  }
+  // Fallback to rolling mean from smooth array
+  if (!Number.isFinite(baseline) && i >= 0 && Number.isFinite(smooth[i])) {
+    baseline = smooth[i]; mode = "rolling30";
+  }
+  // Last resort: overall mean across the visible window
+  if (!Number.isFinite(baseline)) {
+    const m = meanFinite(raw);
+    if (Number.isFinite(m)) { baseline = m; mode = "overall"; }
+  }
+  // Compute z if no pre-computed value
+  if (!Number.isFinite(z) && Number.isFinite(value) && Number.isFinite(baseline)) {
+    const std = stdFinite(raw);
+    if (Number.isFinite(std) && std > 0) z = (value - baseline) / std;
+  }
+
   const status = statusFromZ(z, higherIsBetter);
   const delta = (Number.isFinite(value) && Number.isFinite(baseline)) ? value - baseline : NaN;
   const deltaSign = (higherIsBetter ? delta : -delta) >= 0 ? "good" : "bad";
@@ -415,6 +441,10 @@ function metricCard({ chartId, label, unit, dates, raw, smooth, baselineLabel = 
   const fmtV = (v) => !Number.isFinite(v) ? "—" :
     Math.abs(v) >= 100 ? v.toFixed(0) :
     Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(2);
+  const baselineLabel = mode === "rolling30" ? "30 天基線" :
+                        mode === "overall"   ? "整體平均（資料稀疏，無 30 天 baseline）" :
+                                               "資料不足";
+  const zText = Number.isFinite(z) ? `（${z >= 0 ? "+" : ""}${z.toFixed(2)}σ）` : "";
   return `
     <div class="metric-card status-${status.cls}">
       <div class="metric-head">
@@ -426,9 +456,9 @@ function metricCard({ chartId, label, unit, dates, raw, smooth, baselineLabel = 
       </div>
       <div class="metric-meta">
         <span class="metric-delta ${deltaClass}">
-          ${Number.isFinite(delta) ? (delta >= 0 ? "↑ +" : "↓ ") + fmtV(Math.abs(delta)) + " " + unit : ""}
+          ${Number.isFinite(delta) ? (delta >= 0 ? "↑ +" : "↓ ") + fmtV(Math.abs(delta)) + unit : ""}
         </span>
-        <span class="muted">vs ${baselineLabel} ${fmtV(baseline)}${unit}</span>
+        <span class="muted">vs ${baselineLabel} ${fmtV(baseline)}${unit} ${zText}</span>
       </div>
       <div id="${chartId}" class="metric-chart"></div>
       ${hint ? `<div class="metric-hint muted">${hint}</div>` : ""}
@@ -593,16 +623,19 @@ export function renderTask2(frame, container) {
   html += metricCard({
     chartId: "t2-chart-hrv", label: "HRV", unit: " ms",
     dates, raw: hrv, smooth: hrvSm, higherIsBetter: true,
+    frameRows: frame.rows, baselineKey: "hrv",
     hint: "心率變異 ↑ = 自律神經彈性好",
   });
   html += metricCard({
     chartId: "t2-chart-rhr", label: "靜息心率", unit: " bpm",
     dates, raw: rhr, smooth: rhrSm, higherIsBetter: false,
+    frameRows: frame.rows, baselineKey: "resting_hr",
     hint: "靜息心率 ↓ = 心肺基底進步",
   });
   html += metricCard({
     chartId: "t2-chart-walking", label: "步行心率", unit: " bpm",
     dates, raw: walking, smooth: walkingSm, higherIsBetter: false,
+    frameRows: frame.rows, baselineKey: "walking_hr",
     hint: "同強度步行心率 ↓ = 心肺效率提升",
   });
   html += `</div>`;
@@ -987,26 +1020,31 @@ export function renderTask4(frame, container) {
   html += metricCard({
     chartId: "t4-asym", label: "步行不對稱率", unit: " %",
     dates, raw: asym, smooth: asymSm, higherIsBetter: false,
+    frameRows: frame.rows,
     hint: ">3% 通常代表單側代償（舊傷 / 髖緊 / 長短腳）",
   });
   html += metricCard({
     chartId: "t4-ds", label: "雙腳支撐時間", unit: " %",
     dates, raw: ds, smooth: dsSm, higherIsBetter: false,
+    frameRows: frame.rows,
     hint: ">30% = 步態保守、平衡信心低",
   });
   html += metricCard({
     chartId: "t4-ws", label: "步行速度", unit: " m/s",
     dates, raw: ws, smooth: wsSm, higherIsBetter: true,
+    frameRows: frame.rows,
     hint: "速度 ↓ = 整體步態效率退步的早期訊號",
   });
   html += metricCard({
     chartId: "t4-sl", label: "步長", unit: " cm",
     dates, raw: sl, smooth: slSm, higherIsBetter: true,
+    frameRows: frame.rows,
     hint: "步長 ↓ + 速度 ↓ = 退化或疲勞",
   });
   html += metricCard({
     chartId: "t4-eff", label: "步態效率", unit: " m/beat",
     dates, raw: eff, smooth: effSm, higherIsBetter: true,
+    frameRows: frame.rows,
     hint: "= 速度 × 60 / 步行心率　·　每心跳走多遠，越大越省力",
   });
   html += `</div>`;
@@ -1188,16 +1226,19 @@ export function renderTask5(frame, container) {
   html += metricCard({
     chartId: "t5-daylight", label: "日照時間", unit: " 分",
     dates, raw: daylight, smooth: daylightSm, higherIsBetter: true,
+    frameRows: frame.rows, baselineKey: "daylight",
     hint: "&lt; 30 分連 ≥ 3 天 → 容易影響晝夜節律 + 深睡比",
   });
   html += metricCard({
     chartId: "t5-bedtime", label: "上床時間", unit: " h",
     dates, raw: bedtime, smooth: bedtimeSm, higherIsBetter: false,
+    frameRows: frame.rows,
     hint: "23 = 23:00, 25 = 隔日 01:00。越早越好",
   });
   html += metricCard({
     chartId: "t5-sleep", label: "睡眠分數", unit: " /100",
     dates, raw: sleepScore, smooth: sleepScoreSm, higherIsBetter: true,
+    frameRows: frame.rows, baselineKey: "sleep_score",
     hint: "日照充足通常會推升深睡比 → 睡眠分數提升",
   });
   // Stability stat card (no sparkline; uses statCard)
