@@ -888,7 +888,188 @@ export function renderTask3(frame, container) {
   }
 }
 export function renderTask4(frame, container) {
-  container.innerHTML = PENDING_NOTE(4, "🚶 任務 4：步態力學");
+  if (!frame || frame.rows.length < 14) {
+    container.innerHTML = `<h2 class="task-title">🚶 任務 4：步態力學</h2>` +
+      emptyState("資料量太少，至少需要 14 天。");
+    return;
+  }
+
+  // walking_speed_mps / step_length_cm / walking_hr only show up on iPhone 14+
+  // and require some accumulated walking — we list them up-front as required so
+  // people on older phones see why the tab is empty.
+  const required = ["walking_asymmetry", "double_support",
+                    "walking_speed_mps", "step_length_cm",
+                    "walking_hr", "steps"];
+  const missing = required.filter((c) => !frame.columns.includes(c) ||
+    !columnValues(frame, c).some(Number.isFinite));
+  if (missing.length) {
+    container.innerHTML = `<h2 class="task-title">🚶 任務 4：步態力學</h2>` +
+      callout("warn", `<strong>⚠ 缺少指標：</strong>${missing.map(labelOf).join(" / ")}<br>` +
+        `步行速度 / 步長 / 步行心率 / 不對稱率 / 雙腳支撐都需要 iPhone 較長使用時間 + 規律走路才會穩定累積。`);
+    return;
+  }
+
+  const dates = frame.rows.map((r) => r.date);
+  const asym = columnValues(frame, "walking_asymmetry");
+  const ds = columnValues(frame, "double_support");
+  const ws = columnValues(frame, "walking_speed_mps");
+  const sl = columnValues(frame, "step_length_cm");
+  const wh = columnValues(frame, "walking_hr");
+  const steps = columnValues(frame, "steps");
+
+  // gait_efficiency: scaled to m / beat so the number is human-readable
+  // (raw m/s / bpm gives values like 0.013 which is hard to feel).
+  const eff = ws.map((s, i) => Number.isFinite(s) && Number.isFinite(wh[i]) && wh[i] > 0
+    ? (s * 60) / wh[i] : NaN);
+  const asymSm = rollingMean(asym, 30);
+  const dsSm = rollingMean(ds, 30);
+  const wsSm = rollingMean(ws, 30);
+  const slSm = rollingMean(sl, 30);
+  const effSm = rollingMean(eff, 30);
+
+  // Anomaly weeks
+  const weekMap = groupByWeek(frame.rows);
+  const asymBaseline = meanFinite(asym);
+  const asymStd = stdFinite(asym);
+  const asymThreshold = asymBaseline + 1.5 * asymStd;
+  const stepsBaseline = meanFinite(steps);
+  const anomWeeks = [];
+  for (const [weekKey, rows] of weekMap) {
+    const wAsym = meanFinite(rows.map((r) => r.walking_asymmetry));
+    const wDs = meanFinite(rows.map((r) => r.double_support));
+    const wSteps = meanFinite(rows.map((r) => r.steps));
+    const triggers = [];
+    if (Number.isFinite(wAsym) && wAsym > asymThreshold) triggers.push("不對稱率 ↑");
+    if (Number.isFinite(wDs) && wDs > 30) triggers.push("雙腳支撐 > 30%");
+    if (!triggers.length) continue;
+    anomWeeks.push({
+      weekKey, wAsym, wDs, wSteps,
+      triggers: triggers.join(" + "),
+      stepsHigh: Number.isFinite(wSteps) && Number.isFinite(stepsBaseline) && wSteps > stepsBaseline * 1.2,
+    });
+  }
+  anomWeeks.sort((a, b) => b.weekKey.localeCompare(a.weekKey));
+
+  // Top 10% vs bottom 10% step days
+  const validIdx = [];
+  for (let i = 0; i < frame.rows.length; i++) {
+    if (Number.isFinite(steps[i])) validIdx.push(i);
+  }
+  validIdx.sort((a, b) => steps[a] - steps[b]);
+  const n = validIdx.length;
+  const lowIdx = validIdx.slice(0, Math.max(1, Math.floor(n * 0.1)));
+  const highIdx = validIdx.slice(Math.ceil(n * 0.9));
+  const compareMetrics = [
+    { key: "walking_asymmetry", label: "步行不對稱率", arr: asym, higherBetter: false, unit: "%" },
+    { key: "double_support",    label: "雙腳支撐",     arr: ds,   higherBetter: false, unit: "%" },
+    { key: "walking_speed_mps", label: "步行速度",     arr: ws,   higherBetter: true,  unit: " m/s" },
+    { key: "step_length_cm",    label: "步長",         arr: sl,   higherBetter: true,  unit: " cm" },
+  ];
+  const compareRows = compareMetrics.map((m) => {
+    const lowVals = lowIdx.map((i) => m.arr[i]).filter(Number.isFinite);
+    const highVals = highIdx.map((i) => m.arr[i]).filter(Number.isFinite);
+    return { ...m,
+      lowMean: lowVals.length ? meanFinite(lowVals) : NaN,
+      highMean: highVals.length ? meanFinite(highVals) : NaN,
+      t: lowVals.length >= 5 && highVals.length >= 5 ? welchTTest(highVals, lowVals)
+                                                     : { t: NaN, p: NaN, na: highVals.length, nb: lowVals.length },
+    };
+  });
+
+  // ---- Render ----
+  let html = `<h2 class="task-title">🚶 任務 4：步態力學</h2>`;
+  html += `<p class="task-intro">不對稱率 / 雙腳支撐 / 步速 / 步長 + 步態效率。Apple 比較少人看的數據，但對「身體有沒有偷偷在代償」很敏感——舊傷、髖緊、長短腳常先在這裡發出訊號。</p>`;
+
+  // 5 metric cards (4 raw + 1 derived efficiency)
+  html += `<h3>📏 4 個步態指標 + 步態效率</h3>`;
+  html += `<div class="metric-grid">`;
+  html += metricCard({
+    chartId: "t4-asym", label: "步行不對稱率", unit: " %",
+    dates, raw: asym, smooth: asymSm, higherIsBetter: false,
+    hint: ">3% 通常代表單側代償（舊傷 / 髖緊 / 長短腳）",
+  });
+  html += metricCard({
+    chartId: "t4-ds", label: "雙腳支撐時間", unit: " %",
+    dates, raw: ds, smooth: dsSm, higherIsBetter: false,
+    hint: ">30% = 步態保守、平衡信心低",
+  });
+  html += metricCard({
+    chartId: "t4-ws", label: "步行速度", unit: " m/s",
+    dates, raw: ws, smooth: wsSm, higherIsBetter: true,
+    hint: "速度 ↓ = 整體步態效率退步的早期訊號",
+  });
+  html += metricCard({
+    chartId: "t4-sl", label: "步長", unit: " cm",
+    dates, raw: sl, smooth: slSm, higherIsBetter: true,
+    hint: "步長 ↓ + 速度 ↓ = 退化或疲勞",
+  });
+  html += metricCard({
+    chartId: "t4-eff", label: "步態效率", unit: " m/beat",
+    dates, raw: eff, smooth: effSm, higherIsBetter: true,
+    hint: "= 速度 × 60 / 步行心率　·　每心跳走多遠，越大越省力",
+  });
+  html += `</div>`;
+
+  // Anomaly weeks
+  html += `<h3>⚠ 步態異常週</h3>`;
+  html += `<p class="muted">週均「不對稱率」&gt; 個人基線 + 1.5σ（= ${Number.isFinite(asymThreshold) ? asymThreshold.toFixed(1) + "%" : "—"}），或 週均「雙腳支撐」&gt; 30%。同時看當週步數，判斷是否伴隨高量訓練。</p>`;
+  if (!anomWeeks.length) {
+    html += `<p class="muted">沒有偵測到符合條件的異常週。</p>`;
+  } else {
+    const rows = anomWeeks.slice(0, 30).map((w) => [
+      w.weekKey + " 起",
+      Number.isFinite(w.wAsym) ? w.wAsym.toFixed(2) + "%" : "—",
+      Number.isFinite(w.wDs) ? w.wDs.toFixed(1) + "%" : "—",
+      (Number.isFinite(w.wSteps) ? Math.round(w.wSteps).toLocaleString() : "—") +
+        (w.stepsHigh ? ` <span style="color:var(--warn)">(高量)</span>` : ""),
+      w.triggers,
+    ]);
+    html += tableHtml(["週", "不對稱率", "雙腳支撐", "週均步數", "觸發條件"], rows, { numCols: [1, 2, 3] });
+    if (anomWeeks.length > 30) html += `<p class="muted">（顯示前 30 筆，共 ${anomWeeks.length} 筆）</p>`;
+  }
+
+  // High vs low step day comparison
+  html += `<h3>📊 高步數日 vs 低步數日：步態指標差異</h3>`;
+  html += `<p class="muted">把資料期間「步數 top 10%」(n = ${highIdx.length}) 跟「bottom 10%」(n = ${lowIdx.length}) 對比。Welch t-test, p &lt; 0.05 = 統計顯著（標 *）。</p>`;
+  if (lowIdx.length < 5 || highIdx.length < 5) {
+    html += `<p class="muted">每組樣本太少（&lt; 5 天），無法做 t-test。</p>`;
+  } else {
+    const cmpRows = compareRows.map((r) => {
+      const dirSign = r.highMean - r.lowMean;
+      const goodSign = r.higherBetter ? dirSign > 0 : dirSign < 0;
+      const dirText = (dirSign >= 0 ? "↑ +" : "↓ ") + Math.abs(dirSign).toFixed(2) + r.unit;
+      const sigStar = Number.isFinite(r.t.p) && r.t.p < 0.05 ? " *" : "";
+      const pText = Number.isFinite(r.t.p) ? r.t.p.toFixed(3) : "—";
+      return [
+        r.label,
+        Number.isFinite(r.lowMean) ? r.lowMean.toFixed(2) + r.unit : "—",
+        Number.isFinite(r.highMean) ? r.highMean.toFixed(2) + r.unit : "—",
+        `<span style="color:${goodSign ? 'var(--good)' : 'var(--bad)'}">${dirText}</span>`,
+        pText + sigStar,
+      ];
+    });
+    html += tableHtml(["指標", "低步數日均", "高步數日均", "高 vs 低 (差)", "p 值"], cmpRows,
+      { numCols: [1, 2, 3, 4] });
+    // Plain-language summary
+    const sigBad = compareRows.filter((r) => Number.isFinite(r.t.p) && r.t.p < 0.05 &&
+      ((r.higherBetter && r.highMean < r.lowMean) || (!r.higherBetter && r.highMean > r.lowMean)));
+    if (sigBad.length) {
+      html += callout("warn",
+        `<strong>觀察</strong>　高步數日 ${sigBad.map((m) => m.label).join(" / ")} 顯著惡化 — 你的身體在大量行走時可能在累積代償，建議高量訓練後安排恢復日。`);
+    } else {
+      html += callout("good",
+        `<strong>觀察</strong>　高步數日步態指標沒有顯著惡化，代表你目前承受得住目前訓練量。`);
+    }
+  }
+
+  container.innerHTML = html;
+
+  // Mini charts
+  drawMetricChart("t4-asym", dates, asym, asymSm, "#f0a020");
+  drawMetricChart("t4-ds", dates, ds, dsSm, "#f0a020");
+  drawMetricChart("t4-ws", dates, ws, wsSm, "#34c38f");
+  drawMetricChart("t4-sl", dates, sl, slSm, "#34c38f");
+  drawMetricChart("t4-eff", dates, eff, effSm, "#4f8cff");
 }
 export function renderTask5(frame, container) {
   container.innerHTML = PENDING_NOTE(5, "🌅 任務 5：環境與生理節律");
