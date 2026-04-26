@@ -1779,37 +1779,94 @@ function aggregateReadiness(components, weights) {
   return Math.max(0, Math.min(100, 50 + 12.5 * normalizedSum));
 }
 
-// Carry-forward variant: for a given day, look back up to `lookback` days for
-// the latest finite value of each component. Lets today's breakdown show
-// "RHR was 68 bpm two days ago" rather than just "no data" when today's
-// specific reading is missing. Returns { components, stale } where stale[k]
-// is the lag in days (0 if today, 1+ if pulled from earlier).
-function readinessComponentsCarryForward(frame, idx, lookback = 7) {
+// Carry-forward variant: for a given day, find each component's value with
+// a 3-tier fallback so missing-rolling-z-score days still produce a useful
+// breakdown:
+//   1. cached `_zscore30` in the last 14 days (preferred, uses 30-d baseline)
+//   2. raw value in the last 14 days vs OVERALL window mean / std (fallback)
+//   3. nothing → component is genuinely absent
+// Lets today's display show "RHR was 72 bpm three days ago" even when the
+// rolling baseline didn't form for that day (sparse upload, gappy data).
+function readinessComponentsCarryForward(frame, idx, lookback = 14) {
   const clip = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const lookbackStart = Math.max(0, idx - lookback);
-  function latestFor(key) {
+
+  // Cached: latest finite z-score column value in the lookback window.
+  function latestZ(zKey) {
     for (let i = idx; i >= lookbackStart; i--) {
-      const v = frame.rows[i][key];
+      const v = frame.rows[i][zKey];
       if (Number.isFinite(v)) return { v, idx: i };
     }
     return null;
   }
-  const map = {
-    hrv:   { key: "hrv_zscore30",                 transform: (v) => clip(v, -2, 2) },
-    rhr:   { key: "resting_hr_zscore30",          transform: (v) => clip(-v, -2, 2) },
-    sleep: { key: "sleep_score",                  transform: (v) => (v - 70) / 15 },
-    resp:  { key: "respiratory_zscore30",         transform: (v) => clip(-v, -2, 2) },
-    temp:  { key: "wrist_temp_delta_c_zscore30",  transform: (v) => clip(-Math.abs(v), -2, 0) },
-  };
+
+  // Fallback: compute z from raw vs the entire frame's mean/std. Coarser
+  // than 30-day rolling but still meaningful, and always available so long
+  // as the metric has ≥ 7 finite raw values somewhere in the dataset.
+  function fallbackZ(rawKey) {
+    let n = 0, sum = 0;
+    for (const r of frame.rows) {
+      const x = r[rawKey];
+      if (Number.isFinite(x)) { n++; sum += x; }
+    }
+    if (n < 7) return null;
+    const mean = sum / n;
+    let ss = 0;
+    for (const r of frame.rows) {
+      const x = r[rawKey];
+      if (Number.isFinite(x)) ss += (x - mean) * (x - mean);
+    }
+    const std = Math.sqrt(ss / (n - 1));
+    if (!(std > 0)) return null;
+    for (let i = idx; i >= lookbackStart; i--) {
+      const raw = frame.rows[i][rawKey];
+      if (Number.isFinite(raw)) {
+        return { v: (raw - mean) / std, idx: i };
+      }
+    }
+    return null;
+  }
+
+  // Latest finite raw value (used directly, no z transform) for sleep_score.
+  function latestRaw(rawKey) {
+    for (let i = idx; i >= lookbackStart; i--) {
+      const v = frame.rows[i][rawKey];
+      if (Number.isFinite(v)) return { v, idx: i };
+    }
+    return null;
+  }
+
   const components = {};
   const stale = {};
-  for (const [k, m] of Object.entries(map)) {
-    const r = latestFor(m.key);
-    if (r) {
-      components[k] = m.transform(r.v);
-      if (r.idx !== idx) stale[k] = idx - r.idx;
-    }
+
+  // HRV
+  {
+    const r = latestZ("hrv_zscore30") || fallbackZ("hrv");
+    if (r) { components.hrv = clip(r.v, -2, 2); if (r.idx !== idx) stale.hrv = idx - r.idx; }
   }
+  // Resting HR (invert sign — lower is good)
+  {
+    const r = latestZ("resting_hr_zscore30") || fallbackZ("resting_hr");
+    if (r) { components.rhr = clip(-r.v, -2, 2); if (r.idx !== idx) stale.rhr = idx - r.idx; }
+  }
+  // Sleep score uses the raw value directly: (score - 70) / 15
+  {
+    const r = latestRaw("sleep_score");
+    if (r) { components.sleep = (r.v - 70) / 15; if (r.idx !== idx) stale.sleep = idx - r.idx; }
+  }
+  // Respiratory rate (invert — too high or too low both bad, but here we
+  // only penalise high; abs penalty kept for wrist_temp where deviation
+  // either way is bad)
+  {
+    const r = latestZ("respiratory_zscore30") || fallbackZ("respiratory");
+    if (r) { components.resp = clip(-r.v, -2, 2); if (r.idx !== idx) stale.resp = idx - r.idx; }
+  }
+  // Wrist temperature delta — deviation in either direction is bad
+  {
+    const r = latestZ("wrist_temp_delta_c_zscore30") || fallbackZ("wrist_temp_delta_c");
+    if (r) { components.temp = clip(-Math.abs(r.v), -2, 0); if (r.idx !== idx) stale.temp = idx - r.idx; }
+  }
+
   return { components, stale };
 }
 
@@ -1967,13 +2024,14 @@ export function renderTask6(frame, container) {
   html += `<div id="t6-chart" class="task-chart"></div>`;
   html += `<p class="muted">在這個分析期間：🟢 綠燈 ${greens.length} 天 (${(greens.length / finiteIdx.length * 100).toFixed(0)}%)　·　🔴 紅燈 ${reds.length} 天 (${(reds.length / finiteIdx.length * 100).toFixed(0)}%)</p>`;
 
-  // Component breakdown — plain language. Uses carry-forward so RHR / HRV
-  // readings from up to 7 days ago still count, with a stale annotation.
+  // Component breakdown — plain language. Uses carry-forward (14-day window
+  // + overall-mean fallback) so a metric that's logged in the data but
+  // doesn't have a clean 30-day rolling baseline still shows up.
   html += `<h3>🧩 今天分數的拆解</h3>`;
-  html += `<p class="muted">每個項目對今天分數的影響。如果某項今天沒讀到，會用最近 7 天內最後一次的讀數（顯示「N 天前」）。</p>`;
+  html += `<p class="muted">每個項目對今天分數的影響。如果某項最近沒讀到，會用最近 14 天內最後一次的讀數（顯示「N 天前」）。</p>`;
   const compRows = ["hrv", "rhr", "sleep", "resp", "temp"].map((k) => {
     if (!(k in carry.components)) {
-      return [COMPONENT_LABEL[k], "—", "<span class='muted'>最近 7 天沒讀到</span>"];
+      return [COMPONENT_LABEL[k], "—", "<span class='muted'>最近 14 天沒讀到</span>"];
     }
     const c = carry.components[k];
     const contrib = READINESS_WEIGHTS.spec[k] * c;
