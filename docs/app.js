@@ -67,6 +67,34 @@ function setupDropzone() {
   input.addEventListener("change", (e) => {
     if (e.target.files.length) loadFile(e.target.files[0]);
   });
+
+  // Demo data button — fetch the bundled synthetic export.xml so the user
+  // can preview the dashboard without uploading anything. Sets a session
+  // flag that we use to render a "this is fake data" banner.
+  const demoBtn = $("#loadDemo");
+  if (demoBtn) {
+    demoBtn.addEventListener("click", async () => {
+      const textEl = $("#progressText");
+      $("#progressWrap").style.display = "block";
+      textEl.textContent = "載入示範資料中…";
+      try {
+        const resp = await fetch("./demo.xml");
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const blob = await resp.blob();
+        const file = new File([blob], "demo.xml", { type: "application/xml" });
+        state.isDemo = true;
+        await loadFile(file);
+      } catch (e) {
+        textEl.textContent = `載入示範失敗：${e.message}`;
+      }
+    });
+  }
+
+  // Exit demo: just hard-reload back to upload screen.
+  const exitBtn = $("#exitDemo");
+  if (exitBtn) {
+    exitBtn.addEventListener("click", () => location.reload());
+  }
 }
 
 async function loadFile(file) {
@@ -122,6 +150,9 @@ async function loadFile(file) {
 function initDashboard() {
   $("#dashboard").style.display = "block";
   $("#uploadCard").style.display = "none";
+  // Show demo banner if we loaded the bundled sample
+  const demoBanner = $("#demoBanner");
+  if (demoBanner && state.isDemo) demoBanner.style.display = "flex";
 
   // date range defaults: last 180 days
   const allDates = state.frame.rows.map((r) => r.date);

@@ -46,6 +46,35 @@
     <div class="hint">或點此選擇檔案。所有處理都在本地，不會上傳。</div>
     <input type="file" id="fileInput" accept=".zip,.xml" hidden>
   </div>
+  <div class="upload-actions">
+    <button class="secondary" id="loadDemo" type="button">
+      🧪 沒檔案？看示範資料（120 天合成數據）
+    </button>
+  </div>
+  <details class="upload-help">
+    <summary>📦 上傳失敗 / 沒電腦怎麼辦？</summary>
+    <div class="upload-help-body">
+      <strong>方法 1：用桌機 / 筆電上傳（最穩）</strong>
+      <ol>
+        <li>iPhone「健康」→ 個人頭像 → 匯出所有健康資料 → 取得 <code>匯出.zip</code></li>
+        <li>把 <code>匯出.zip</code> 存到 <strong>iCloud 雲碟</strong> / Google Drive / Dropbox</li>
+        <li>用桌機打開這個網頁、登入雲端、下載到電腦、上傳</li>
+      </ol>
+      <strong>方法 2：AirDrop 到 Mac</strong>
+      <ol>
+        <li>iPhone 匯出時直接 AirDrop 給 Mac</li>
+        <li>Mac Safari / Chrome 打開這個網頁，上傳 <code>匯出.zip</code></li>
+      </ol>
+      <strong>方法 3：本機跑 Streamlit 版（會 Python 的話）</strong>
+      <ol>
+        <li><code>git clone https://github.com/virus11456/autohealth</code></li>
+        <li><code>pip install -r requirements.txt && streamlit run app.py</code></li>
+        <li>瀏覽器開 <code>localhost:8501</code>，左側上傳。Python 解析沒有 iOS Safari 的記憶體限制</li>
+      </ol>
+      <strong>方法 4：先看示範資料</strong><br>
+      點上面綠色按鈕，會載入合成資料讓你先看儀表板長什麼樣。確認有用再想辦法上傳真實資料。
+    </div>
+  </details>
   <div id="progressWrap" style="display:none">
     <div class="progress" id="progress"><div></div></div>
     <div class="progress-text" id="progressText"></div>
@@ -57,6 +86,11 @@
 
 <!-- Dashboard -->
 <div id="dashboard" style="display:none">
+
+  <div id="demoBanner" class="demo-banner" style="display:none;">
+    🧪 <strong>示範模式</strong>　·　目前看的是合成資料，不是你自己的健康紀錄。
+    <button class="secondary" id="exitDemo" type="button">用我自己的資料</button>
+  </div>
 
   <div class="card">
     <div class="controls">

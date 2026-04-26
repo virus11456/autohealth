@@ -150,6 +150,44 @@ main { padding: 24px; max-width: 1400px; margin: 0 auto; }
   font-size: 0.85em;
 }
 
+.upload-actions {
+  display: flex; justify-content: center; margin: 14px 0 4px;
+}
+.upload-actions button {
+  font-size: 0.92rem;
+}
+
+.upload-help {
+  margin-top: 18px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+.upload-help summary {
+  cursor: pointer; font-weight: 600; font-size: 0.92rem;
+  color: var(--accent);
+}
+.upload-help-body {
+  margin-top: 10px; font-size: 0.88rem; line-height: 1.7;
+}
+.upload-help-body strong { display: block; margin-top: 12px; }
+.upload-help-body strong:first-child { margin-top: 0; }
+.upload-help-body ol { margin: 4px 0 8px 22px; padding: 0; }
+.upload-help-body li { margin: 2px 0; }
+.upload-help-body code {
+  background: var(--panel-2); padding: 1px 5px;
+  border-radius: 3px; font-size: 0.85em;
+}
+
+.demo-banner {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  background: rgba(167,139,250,0.10);
+  border: 1px solid rgba(167,139,250,0.4);
+  border-radius: 8px;
+  padding: 10px 14px; margin-bottom: 14px;
+  font-size: 0.9rem;
+}
+.demo-banner button { margin-left: auto; }
+
 .progress {
   margin-top: 14px; height: 6px; background: var(--panel-2); border-radius: 3px;
   overflow: hidden;
