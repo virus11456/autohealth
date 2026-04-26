@@ -98,10 +98,34 @@ function initDashboard() {
 
   for (const el of [startEl, endEl]) {
     el.addEventListener("change", () => {
+      // Manual date changes clear the preset highlight
+      $$(".preset-btn").forEach((b) => b.classList.remove("active"));
       applyFilter();
       renderActiveTab();
     });
   }
+
+  // Quick-select preset buttons
+  $$(".preset-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const preset = btn.dataset.preset;
+      const maxStr = state.frame.rows[state.frame.rows.length - 1].date;
+      const minStr = state.frame.rows[0].date;
+      const maxD = new Date(maxStr + "T00:00:00");
+      let target;
+      if (preset === "1m")      { target = new Date(maxD); target.setMonth(maxD.getMonth() - 1); }
+      else if (preset === "3m") { target = new Date(maxD); target.setMonth(maxD.getMonth() - 3); }
+      else if (preset === "1y") { target = new Date(maxD); target.setFullYear(maxD.getFullYear() - 1); }
+      else                      { target = new Date(minStr + "T00:00:00"); }
+      const startStr = target.toISOString().slice(0, 10);
+      $("#dateStart").value = startStr < minStr ? minStr : startStr;
+      $("#dateEnd").value = maxStr;
+      $$(".preset-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      applyFilter();
+      renderActiveTab();
+    });
+  });
 
   // The window / sigma controls were used by the now-removed trend / anomaly
   // tabs. Hide them so the controls bar stays minimal — the 7 tasks each carry
