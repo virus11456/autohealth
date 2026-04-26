@@ -193,6 +193,57 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   font-size: 0.78rem; color: var(--muted);
 }
 
+/* ---- Metric cards ---- */
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.metric-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--info);
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex; flex-direction: column;
+}
+.metric-card.status-good  { border-left-color: var(--good); }
+.metric-card.status-fair  { border-left-color: var(--info); }
+.metric-card.status-low   { border-left-color: var(--warn); }
+.metric-card.status-alert { border-left-color: var(--bad);  }
+.metric-card.status-empty { border-left-color: var(--muted); }
+.metric-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 0.85rem;
+}
+.metric-label { color: var(--muted); }
+.metric-status { font-size: 0.78rem; }
+.metric-card.status-good  .metric-status { color: var(--good); }
+.metric-card.status-fair  .metric-status { color: var(--info); }
+.metric-card.status-low   .metric-status { color: var(--warn); }
+.metric-card.status-alert .metric-status { color: var(--bad);  }
+.metric-card.status-empty .metric-status { color: var(--muted); }
+.metric-value {
+  font-size: 1.9rem; font-weight: 600; margin-top: 4px; line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.metric-unit {
+  font-size: 0.65em; color: var(--muted); font-weight: 400; margin-left: 4px;
+}
+.metric-meta {
+  margin-top: 4px; display: flex; gap: 10px; flex-wrap: wrap;
+  font-size: 0.78rem;
+}
+.metric-delta { font-weight: 600; font-variant-numeric: tabular-nums; }
+.metric-delta.good  { color: var(--good); }
+.metric-delta.bad   { color: var(--bad);  }
+.metric-delta.muted { color: var(--muted); }
+.metric-chart { margin-top: 8px; min-height: 140px; }
+.metric-hint {
+  margin-top: 6px; font-size: 0.75rem;
+}
+
 /* ---- Settings modal ---- */
 .icon-btn {
   background: transparent; border: 1px solid var(--border); color: var(--text);
