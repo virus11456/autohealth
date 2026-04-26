@@ -98,22 +98,34 @@ function setupDropzone() {
 }
 
 async function loadFile(file) {
-  const progressEl = $("#progress > div");
+  const wrap = $("#progressWrap");
+  const bar = $("#progress");
+  const fill = $("#progress > div");
   const textEl = $("#progressText");
-  $("#progressWrap").style.display = "block";
-  textEl.textContent = "讀取中…";
-  // Mark sessionStorage so we can detect "tab got killed during parse" on
-  // the next page load (mostly an iOS Safari memory-limit symptom).
+  const pctEl = $("#progressPercent");
+  wrap.style.display = "block";
+  bar.classList.add("indeterminate");
+  fill.style.width = "0%";
+  pctEl.textContent = "";
+  const sizeMb = (file.size / 1024 / 1024).toFixed(file.size < 10 * 1024 * 1024 ? 2 : 1);
+  textEl.textContent = `📦 開始讀取 ${file.name}（${sizeMb} MB）…`;
+
   try { sessionStorage.setItem("autohealth.parseInProgress", "1"); } catch {}
-  // Big-file warning specifically for iOS where memory limits are tightest.
   if (isIOS() && file.size > 100 * 1024 * 1024) {
-    const sizeMb = (file.size / 1024 / 1024).toFixed(0);
-    textEl.textContent = `讀取 ${sizeMb} MB 中… iPhone 記憶體緊，可能會失敗，建議改用桌機。`;
+    textEl.textContent = `📦 讀取 ${sizeMb} MB 中… iPhone 記憶體緊，可能會失敗，建議改用桌機。`;
   }
   try {
     const parsed = await parseExport(file, ({ message, progress }) => {
       textEl.textContent = message;
-      if (progress != null) progressEl.style.width = `${Math.min(100, progress * 100)}%`;
+      if (progress != null) {
+        bar.classList.remove("indeterminate");
+        const pct = Math.min(100, progress * 100);
+        fill.style.width = `${pct}%`;
+        pctEl.textContent = `${pct.toFixed(0)}%`;
+      } else {
+        bar.classList.add("indeterminate");
+        pctEl.textContent = "";
+      }
     });
     // Parse succeeded — clear the mid-parse marker so reload-detection
     // doesn't show a false alarm next page load.
