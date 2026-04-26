@@ -674,8 +674,218 @@ export function renderTask2(frame, container) {
   drawMetricChart("t2-chart-rhr", dates, rhr, rhrSm, "#ef4444");
   drawMetricChart("t2-chart-walking", dates, walking, walkingSm, "#f0a020");
 }
+// Status from a Spearman / partial-corr r value.
+function corrStatus(r) {
+  if (!Number.isFinite(r)) return { emoji: "⚪", label: "資料不足", cls: "empty" };
+  const abs = Math.abs(r);
+  if (abs >= 0.5) return r > 0
+    ? { emoji: "🟢", label: "強正相關", cls: "good" }
+    : { emoji: "🔴", label: "強負相關", cls: "alert" };
+  if (abs >= 0.3) return r > 0
+    ? { emoji: "🔵", label: "中等正相關", cls: "fair" }
+    : { emoji: "🟡", label: "中等負相關", cls: "low" };
+  if (abs >= 0.15) return { emoji: "⚪", label: "弱相關", cls: "fair" };
+  return { emoji: "⚪", label: "不顯著", cls: "empty" };
+}
+
+// Stat card: like metricCard but for derived statistics (no raw value /
+// sparkline). Shows a label, a big stat, optional subtitle, status pill, hint.
+function statCard({ label, value, subtitle = "", status, hint = "" }) {
+  return `
+    <div class="metric-card status-${status.cls}">
+      <div class="metric-head">
+        <span class="metric-label">${label}</span>
+        <span class="metric-status">${status.emoji} ${status.label}</span>
+      </div>
+      <div class="metric-value">${value}</div>
+      <div class="metric-meta">${subtitle ? `<span class="muted">${subtitle}</span>` : ""}</div>
+      ${hint ? `<div class="metric-hint muted">${hint}</div>` : ""}
+    </div>`;
+}
+
 export function renderTask3(frame, container) {
-  container.innerHTML = PENDING_NOTE(3, "💤 任務 3：睡眠 → 隔日恢復");
+  if (!frame || frame.rows.length < 14) {
+    container.innerHTML = `<h2 class="task-title">💤 任務 3：睡眠 → 隔日恢復</h2>` +
+      emptyState("資料量太少，至少需要 14 天才能跑 lag-1 相關分析。");
+    return;
+  }
+
+  const required = ["sleep_hours", "sleep_deep_minutes", "sleep_rem_minutes",
+                    "sleep_score", "hrv", "resting_hr"];
+  const missing = required.filter((c) => !frame.columns.includes(c) ||
+    !columnValues(frame, c).some(Number.isFinite));
+  if (missing.length) {
+    container.innerHTML = `<h2 class="task-title">💤 任務 3：睡眠 → 隔日恢復</h2>` +
+      callout("warn", `<strong>⚠ 缺少指標：</strong>${missing.map(labelOf).join(" / ")}<br>` +
+        `這個任務需要 睡眠時長 / 深睡 / REM / 睡眠分數 / HRV / 靜息心率 都有資料才能跑。`);
+    return;
+  }
+
+  // Build aligned arrays: yesterday's sleep_* paired with today's recovery
+  const hrvToday = [], rhrToday = [];
+  const sleepHoursY = [], sleepDeepY = [], sleepRemY = [], sleepScoreY = [];
+  const deepRemRatioY = [];
+  for (let i = 1; i < frame.rows.length; i++) {
+    const t = frame.rows[i], y = frame.rows[i - 1];
+    hrvToday.push(t.hrv); rhrToday.push(t.resting_hr);
+    sleepHoursY.push(y.sleep_hours);
+    sleepDeepY.push(y.sleep_deep_minutes);
+    sleepRemY.push(y.sleep_rem_minutes);
+    sleepScoreY.push(y.sleep_score);
+    const totalMin = y.sleep_hours * 60;
+    deepRemRatioY.push(totalMin > 0
+      ? (y.sleep_deep_minutes + y.sleep_rem_minutes) / totalMin : NaN);
+  }
+
+  // 3 hypotheses (partial corr against today's HRV)
+  const hypA = partialCorr(sleepHoursY, hrvToday, [sleepDeepY, sleepRemY]);
+  const hypB = partialCorr(sleepDeepY, hrvToday, [sleepHoursY, sleepRemY]);
+  // Hypothesis C: ratio is already a derived combo, no further controls
+  const hypC = (() => {
+    const xs = [], ys = [];
+    for (let i = 0; i < hrvToday.length; i++) {
+      if (Number.isFinite(deepRemRatioY[i]) && Number.isFinite(hrvToday[i])) {
+        xs.push(deepRemRatioY[i]); ys.push(hrvToday[i]);
+      }
+    }
+    if (xs.length < 6) return { r: NaN, n: xs.length };
+    return { r: pearson(xs, ys), n: xs.length };
+  })();
+
+  const hypotheses = [
+    { id: "A", name: "總睡眠時長", desc: "(控制深睡 / REM)",
+      hint: "睡時數越長，隔日 HRV 越高",
+      r: hypA.r, n: hypA.n },
+    { id: "B", name: "深睡時長", desc: "(控制總時長 / REM)",
+      hint: "即使總時長不變，深睡分鐘多 → 隔日恢復更好",
+      r: hypB.r, n: hypB.n },
+    { id: "C", name: "深睡 + REM 比", desc: "(深睡 + REM) / 總時長",
+      hint: "高效睡眠（深 + REM 佔比高）→ 隔日恢復更好",
+      r: hypC.r, n: hypC.n },
+  ];
+  const winner = [...hypotheses].sort((a, b) =>
+    (Number.isFinite(b.r) ? Math.abs(b.r) : -1) - (Number.isFinite(a.r) ? Math.abs(a.r) : -1))[0];
+
+  // lag-1 Spearman correlation table: rows = sleep metrics, cols = recovery
+  const sleepKeys = [
+    ["sleep_hours", "睡眠時數", sleepHoursY],
+    ["sleep_deep_minutes", "深睡分鐘", sleepDeepY],
+    ["sleep_rem_minutes", "REM 分鐘", sleepRemY],
+    ["sleep_score", "睡眠分數", sleepScoreY],
+  ];
+  const recoveryKeys = [
+    ["hrv", "HRV (今日)", hrvToday, true],
+    ["resting_hr", "靜息心率 (今日)", rhrToday, false],
+  ];
+  if (frame.columns.includes("walking_hr")) {
+    const walkingToday = [];
+    for (let i = 1; i < frame.rows.length; i++) walkingToday.push(frame.rows[i].walking_hr);
+    recoveryKeys.push(["walking_hr", "步行心率 (今日)", walkingToday, false]);
+  }
+
+  // sleep_score binning → next-day HRV box plot
+  const bins = [
+    { label: "<60", lo: -Infinity, hi: 60, color: "#ef4444", values: [] },
+    { label: "60-75", lo: 60, hi: 75, color: "#f0a020", values: [] },
+    { label: "75-85", lo: 75, hi: 85, color: "#4f8cff", values: [] },
+    { label: ">85", lo: 85, hi: Infinity, color: "#34c38f", values: [] },
+  ];
+  for (let i = 0; i < hrvToday.length; i++) {
+    const sc = sleepScoreY[i], hrv = hrvToday[i];
+    if (!Number.isFinite(sc) || !Number.isFinite(hrv)) continue;
+    for (const b of bins) {
+      if (sc >= b.lo && sc < b.hi) { b.values.push(hrv); break; }
+    }
+  }
+  const binSummary = bins.map((b) => ({
+    label: b.label, n: b.values.length,
+    mean: b.values.length ? meanFinite(b.values) : NaN,
+  }));
+
+  // ---- Render ----
+  let html = `<h2 class="task-title">💤 任務 3：睡眠 → 隔日恢復</h2>`;
+  html += `<p class="task-intro">把昨晚的睡眠特徵跟今天的恢復指標對齊（lag = 1 天），驗證「對你而言」哪個睡眠面向最值得優化。</p>`;
+
+  // 3 hypothesis cards
+  html += `<h3>🧪 三個假設：哪個睡眠面向對隔日 HRV 最重要？</h3>`;
+  html += `<p class="muted">Partial correlation 排除其他睡眠變數的線性影響後，跟今天 HRV 的相關係數。|r| 越高 = 越獨立重要。</p>`;
+  html += `<div class="metric-grid">`;
+  for (const h of hypotheses) {
+    const status = corrStatus(h.r);
+    const rText = Number.isFinite(h.r) ? `${h.r >= 0 ? "+" : ""}${h.r.toFixed(2)}` : "—";
+    html += statCard({
+      label: `假設 ${h.id}：${h.name}`,
+      value: rText,
+      subtitle: `partial r　${h.desc}　·　n = ${h.n}`,
+      status, hint: h.hint,
+    });
+  }
+  html += `</div>`;
+
+  // Conclusion callout
+  if (Number.isFinite(winner.r) && Math.abs(winner.r) >= 0.15) {
+    html += callout("good",
+      `<strong>結論</strong>　對你而言，<strong>「${winner.name}」</strong>對隔日 HRV 影響最強（partial r = ${winner.r.toFixed(2)}, n = ${winner.n}）。優先優化這個面向，會比追求其他面向更直接看到隔天恢復改善。`);
+  } else {
+    html += callout("warn",
+      `<strong>結論</strong>　三個假設的偏相關都偏弱（|r| < 0.15），可能需要更多資料；或這三個睡眠維度對你的 HRV 都沒單獨突出影響——可以試試看其他變因（運動量 / 壓力）。`);
+  }
+
+  // lag-1 correlation matrix
+  html += `<h3>📋 lag-1 Spearman 相關矩陣</h3>`;
+  html += `<p class="muted">列：昨晚睡眠指標　·　欄：今天的恢復指標。藍 = 正相關，紅 = 負相關。星號 * 代表 p &lt; 0.05。</p>`;
+  let mtxHtml = `<table class="task-table"><thead><tr><th>　</th>`;
+  for (const [, label] of recoveryKeys) mtxHtml += `<th class="num">${label}</th>`;
+  mtxHtml += `</tr></thead><tbody>`;
+  for (const [_, sLabel, sArr] of sleepKeys) {
+    mtxHtml += `<tr><th>${sLabel}</th>`;
+    for (const [, , rArr, higherBetter] of recoveryKeys) {
+      const { r, p, n } = spearmanPair(sArr, rArr);
+      const sig = Number.isFinite(p) && p < 0.05 ? "*" : "";
+      const txt = Number.isFinite(r)
+        ? `<span style="color:${corrCellColor(r)}">${r >= 0 ? "+" : ""}${r.toFixed(2)}${sig}</span><br><span class="muted" style="font-size:0.7rem">n=${n}</span>`
+        : "—";
+      mtxHtml += `<td class="num">${txt}</td>`;
+    }
+    mtxHtml += `</tr>`;
+  }
+  mtxHtml += `</tbody></table>`;
+  html += mtxHtml;
+
+  // Sleep score binning boxplot
+  html += `<h3>📊 睡眠分數分箱 → 隔日 HRV 分佈</h3>`;
+  html += `<p class="muted">把昨晚睡眠分數分 4 箱，看隔天 HRV 的分佈。理想：分數越高，HRV 中位數應該越高。</p>`;
+  // Bin summary table (mean per bin)
+  const binRows = binSummary.map((b) =>
+    [b.label, b.n, Number.isFinite(b.mean) ? b.mean.toFixed(1) + " ms" : "—"]);
+  html += tableHtml(["睡眠分數區間", "天數", "隔日 HRV 平均"], binRows, { numCols: [1, 2] });
+  html += `<div id="t3-box" class="task-chart"></div>`;
+
+  container.innerHTML = html;
+
+  // Render boxplot via Plotly
+  if (typeof Plotly !== "undefined") {
+    const div = document.getElementById("t3-box");
+    if (div) {
+      const traces = bins
+        .filter((b) => b.values.length > 0)
+        .map((b) => ({
+          type: "box", y: b.values, name: b.label,
+          marker: { color: b.color }, line: { color: b.color },
+          boxpoints: "outliers", boxmean: true,
+        }));
+      Plotly.newPlot(div, traces, {
+        paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+        font: { color: "#e6e9ef", family: "inherit", size: 11 },
+        margin: { l: 50, r: 20, t: 20, b: 40 },
+        xaxis: { title: { text: "昨晚睡眠分數", font: { size: 11 } },
+                 gridcolor: "rgba(127,127,127,0.08)" },
+        yaxis: { title: { text: "隔日 HRV (ms)", font: { size: 11 } },
+                 gridcolor: "rgba(127,127,127,0.08)" },
+        height: 320, showlegend: false,
+      }, { displaylogo: false, responsive: true });
+    }
+  }
 }
 export function renderTask4(frame, container) {
   container.innerHTML = PENDING_NOTE(4, "🚶 任務 4：步態力學");
