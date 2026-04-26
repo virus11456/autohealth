@@ -515,9 +515,14 @@ function corrMatrixHtml(labels, series) {
     for (let j = 0; j < n; j++) {
       const cell = m[i][j];
       const r = cell.r;
-      const text = i === j ? "—" : Number.isFinite(r)
-        ? `<span style="color:${corrCellColor(r)}">${r >= 0 ? "+" : ""}${r.toFixed(2)}</span>`
-        : "—";
+      let text;
+      if (i === j) text = "—";
+      else if (Number.isFinite(r)) {
+        text = `<span style="color:${corrCellColor(r)}">${r >= 0 ? "+" : ""}${r.toFixed(2)}</span>` +
+               `<br><span class="muted" style="font-size:0.7rem">n=${cell.n}</span>`;
+      } else {
+        text = `—<br><span class="muted" style="font-size:0.7rem">n=${cell.n ?? 0}</span>`;
+      }
       html += `<td class="num">${text}</td>`;
     }
     html += "</tr>";
@@ -640,10 +645,13 @@ export function renderTask2(frame, container) {
   });
   html += `</div>`;
 
-  // Correlation matrix on z-scores
-  html += `<h3>🔗 z-score 相關矩陣</h3>`;
-  html += `<p class="muted" style="margin: 0 0 8px 0;">用 30 天 z-score 算 Spearman；藍 = 正相關，紅 = 負相關。健康狀況下：HRV ↔ RHR 應該是負，HRV ↔ 步行 HR 應該是負，RHR ↔ 步行 HR 應該是正。</p>`;
-  html += corrMatrixHtml(["HRV", "靜息 HR", "步行 HR"], [hrvZ, rhrZ, walkingZ]);
+  // Correlation matrix on RAW values (Spearman is rank-based; z-score
+  // standardisation is a monotonic transform and produces identical ranks,
+  // so using raw values is mathematically equivalent but covers many more
+  // days when z-score columns are sparse — a real concern with light wearers).
+  html += `<h3>🔗 三角相關矩陣 (Spearman)</h3>`;
+  html += `<p class="muted" style="margin: 0 0 8px 0;">用每日數值算 Spearman 排序相關（對非線性 / 離群值穩健）。藍 = 正相關，紅 = 負相關。健康狀況下：HRV ↔ RHR 應該是負，HRV ↔ 步行 HR 應該是負，RHR ↔ 步行 HR 應該是正。</p>`;
+  html += corrMatrixHtml(["HRV", "靜息 HR", "步行 HR"], [hrv, rhr, walking]);
 
   // Fatigue days
   html += `<h3>⚠ 典型疲勞日（HRV z &lt; -1 且 RHR z &gt; +1 且 步行 HR z &gt; +1）</h3>`;
