@@ -1202,9 +1202,77 @@ export function renderTask4(frame, container) {
     };
   });
 
+  // ---- Today's verdict ----
+  const tIdx4 = lastFiniteIdx(asym) >= 0 ? lastFiniteIdx(asym) : lastFiniteIdx(ds);
+  const tr4 = tIdx4 >= 0 ? frame.rows[tIdx4] : null;
+  const todayAsym = tr4?.walking_asymmetry;
+  const todayDs = tr4?.double_support;
+  const gaitWarnings = [];
+  const gaitGood = [];
+  const gaitEffects = [];
+
+  if (Number.isFinite(todayAsym)) {
+    if (todayAsym > 3) {
+      gaitWarnings.push(`走路有點偏一邊（${todayAsym.toFixed(1)}%）`);
+      gaitEffects.push({ kind: "bad", title: "⚠ 走路偏一邊",
+        body: "可能單側膝蓋 / 髖關節磨損加速、容易腰痠。常見原因：舊傷、長短腳、髖屈肌緊。建議做髖關節伸展，或找物理治療師評估。" });
+    } else if (todayAsym <= 2) {
+      gaitGood.push("走路左右平均");
+    }
+  }
+  if (Number.isFinite(todayDs)) {
+    if (todayDs > 30) {
+      gaitWarnings.push(`走路太保守（雙腳同時著地時間 ${todayDs.toFixed(0)}%）`);
+      gaitEffects.push({ kind: "bad", title: "⚠ 走路太「貼地」",
+        body: "雙腳同時著地的時間偏長 → 平衡感下降 / 跌倒風險上升。常見原因：年齡、神經系統不穩、腳踝或膝蓋有問題。建議做單腳平衡訓練。" });
+    } else if (todayDs >= 22 && todayDs <= 28) {
+      gaitGood.push("步態節奏正常");
+    }
+  }
+  // Speed / length deltas vs baseline (use frame baselines if available, else overall)
+  const wsLatestZ = (() => {
+    const ws30 = tr4?.walking_speed_mps; if (!Number.isFinite(ws30)) return NaN;
+    const m = meanFinite(ws), s = stdFinite(ws); return s > 0 ? (ws30 - m) / s : NaN;
+  })();
+  const slLatestZ = (() => {
+    const sl30 = tr4?.step_length_cm; if (!Number.isFinite(sl30)) return NaN;
+    const m = meanFinite(sl), s = stdFinite(sl); return s > 0 ? (sl30 - m) / s : NaN;
+  })();
+  if (Number.isFinite(wsLatestZ) && wsLatestZ < -0.7) {
+    gaitWarnings.push("走路速度比平常慢");
+    gaitEffects.push({ kind: "bad", title: "⚠ 走路比平常慢",
+      body: "心肺體能或腿力可能下降。如果是短期偏慢可能是累，如果持續好幾週要注意。" });
+  } else if (Number.isFinite(wsLatestZ) && wsLatestZ > 0.7) {
+    gaitGood.push("走路速度好");
+  }
+  if (Number.isFinite(slLatestZ) && slLatestZ < -0.7) {
+    gaitWarnings.push("步伐變小");
+    gaitEffects.push({ kind: "bad", title: "⚠ 步伐比平常小",
+      body: "腿力 / 髖屈肌活動度可能下降，或單純太累。建議做髖伸展 + 弓箭步。" });
+  }
+
+  let gaitVerdict;
+  if (!Number.isFinite(todayAsym) && !Number.isFinite(todayDs)) {
+    gaitVerdict = { cls: "empty", emoji: "⚪", headline: "資料不足",
+      detail: "沒有最近的步態資料。Apple Watch 要佩戴 + 走路 30 秒以上才會記錄。" };
+  } else if (gaitWarnings.length === 0) {
+    gaitVerdict = { cls: "good", emoji: "🟢", headline: "走路狀態正常",
+      detail: gaitGood.length ? `表現：${gaitGood.join("、")}。` : "各項數值都在正常範圍。",
+      action: "繼續維持目前的活動量。" };
+  } else if (gaitWarnings.length === 1) {
+    gaitVerdict = { cls: "low", emoji: "🟡", headline: "有一個地方要注意",
+      detail: gaitWarnings[0] + "。其他指標還 OK。",
+      action: "短期觀察 1-2 週，看是否持續。" };
+  } else {
+    gaitVerdict = { cls: "alert", emoji: "🔴", headline: "走路品質下降，可能在代償",
+      detail: gaitWarnings.join("、") + "。多個指標一起惡化代表身體可能在偷工。",
+      action: "減量訓練、做髖 / 腿伸展，必要時找物理治療師。" };
+  }
+
   // ---- Render ----
-  let html = `<h2 class="task-title">🚶 任務 4：步態力學</h2>`;
-  html += `<p class="task-intro">不對稱率 / 雙腳支撐 / 步速 / 步長 + 步態效率。Apple 比較少人看的數據，但對「身體有沒有偷偷在代償」很敏感——舊傷、髖緊、長短腳常先在這裡發出訊號。</p>`;
+  let html = `<h2 class="task-title">🚶 任務 4：走路品質</h2>`;
+  html += `<p class="task-intro">看你「走路時身體會不會偷偷代償」。舊傷 / 髖緊 / 腿力下降常先在這裡出現訊號，比膝蓋真的痛起來早幾週。</p>`;
+  html += verdictPanel(gaitVerdict);
 
   // 5 metric cards (4 raw + 1 derived efficiency)
   html += `<h3>📏 4 個步態指標 + 步態效率</h3>`;
@@ -1241,56 +1309,53 @@ export function renderTask4(frame, container) {
   });
   html += `</div>`;
 
-  // Anomaly weeks
-  html += `<h3>⚠ 步態異常週</h3>`;
-  html += `<p class="muted">週均「不對稱率」&gt; 個人基線 + 1.5σ（= ${Number.isFinite(asymThreshold) ? asymThreshold.toFixed(1) + "%" : "—"}），或 週均「雙腳支撐」&gt; 30%。同時看當週步數，判斷是否伴隨高量訓練。</p>`;
-  if (!anomWeeks.length) {
-    html += `<p class="muted">沒有偵測到符合條件的異常週。</p>`;
-  } else {
-    const rows = anomWeeks.slice(0, 30).map((w) => [
-      w.weekKey + " 起",
-      Number.isFinite(w.wAsym) ? w.wAsym.toFixed(2) + "%" : "—",
-      Number.isFinite(w.wDs) ? w.wDs.toFixed(1) + "%" : "—",
-      (Number.isFinite(w.wSteps) ? Math.round(w.wSteps).toLocaleString() : "—") +
-        (w.stepsHigh ? ` <span style="color:var(--warn)">(高量)</span>` : ""),
-      w.triggers,
-    ]);
-    html += tableHtml(["週", "不對稱率", "雙腳支撐", "週均步數", "觸發條件"], rows, { numCols: [1, 2, 3] });
-    if (anomWeeks.length > 30) html += `<p class="muted">（顯示前 30 筆，共 ${anomWeeks.length} 筆）</p>`;
+  // ---- 對你身體的可能影響 (plain-language effect cards) ----
+  if (gaitEffects.length) {
+    html += `<h3>💡 走路狀態對你身體的可能影響</h3>`;
+    html += `<div class="effects-list">`;
+    for (const e of gaitEffects) {
+      html += `<div class="effect-item ${e.kind}">
+        <div class="effect-title">${e.title}</div>
+        <div class="effect-body">${e.body}</div>
+      </div>`;
+    }
+    html += `</div>`;
   }
 
-  // High vs low step day comparison
-  html += `<h3>📊 高步數日 vs 低步數日：步態指標差異</h3>`;
-  html += `<p class="muted">把資料期間「步數 top 10%」(n = ${highIdx.length}) 跟「bottom 10%」(n = ${lowIdx.length}) 對比。Welch t-test, p &lt; 0.05 = 統計顯著（標 *）。</p>`;
+  // ---- 走得多時會不會代償（plain-language version of high vs low day) ----
+  html += `<h3>🏃 你走得多時，走路品質會不會變差？</h3>`;
   if (lowIdx.length < 5 || highIdx.length < 5) {
-    html += `<p class="muted">每組樣本太少（&lt; 5 天），無法做 t-test。</p>`;
+    html += `<p class="muted">資料還不夠多，先繼續累積。</p>`;
   } else {
+    const sigBad = compareRows.filter((r) => Number.isFinite(r.t.p) && r.t.p < 0.05 &&
+      ((r.higherBetter && r.highMean < r.lowMean) || (!r.higherBetter && r.highMean > r.lowMean)));
+    const sigGood = compareRows.filter((r) => Number.isFinite(r.t.p) && r.t.p < 0.05 &&
+      ((r.higherBetter && r.highMean > r.lowMean) || (!r.higherBetter && r.highMean < r.lowMean)));
+    if (sigBad.length) {
+      html += callout("low",
+        `<strong>有點代償跡象</strong><br>` +
+        `當你走比較多時，<strong>${sigBad.map((m) => m.label).join("、")}</strong> 變得明顯比較差。代表身體在大量行走時可能在偷工減料，長期累積容易受傷。<br>` +
+        `→ 建議：高量行走的隔天安排輕鬆日，做髖 / 腿伸展。`);
+    } else {
+      html += callout("good",
+        `<strong>很好，沒有代償跡象</strong><br>` +
+        `就算你走得多，走路品質沒有明顯變差。代表你目前承受得住這個運動量。`);
+    }
+    // Brief data-backed table for power users (kept compact)
+    html += `<details style="margin-top:8px;"><summary class="muted" style="cursor:pointer; font-size:0.85rem;">想看數字 (高 vs 低 10% 步數日)</summary>`;
     const cmpRows = compareRows.map((r) => {
-      const dirSign = r.highMean - r.lowMean;
-      const goodSign = r.higherBetter ? dirSign > 0 : dirSign < 0;
-      const dirText = (dirSign >= 0 ? "↑ +" : "↓ ") + Math.abs(dirSign).toFixed(2) + r.unit;
-      const sigStar = Number.isFinite(r.t.p) && r.t.p < 0.05 ? " *" : "";
-      const pText = Number.isFinite(r.t.p) ? r.t.p.toFixed(3) : "—";
+      const diff = r.highMean - r.lowMean;
+      const goodSign = r.higherBetter ? diff > 0 : diff < 0;
+      const dirText = (diff >= 0 ? "+" : "") + diff.toFixed(2) + r.unit;
       return [
         r.label,
         Number.isFinite(r.lowMean) ? r.lowMean.toFixed(2) + r.unit : "—",
         Number.isFinite(r.highMean) ? r.highMean.toFixed(2) + r.unit : "—",
         `<span style="color:${goodSign ? 'var(--good)' : 'var(--bad)'}">${dirText}</span>`,
-        pText + sigStar,
       ];
     });
-    html += tableHtml(["指標", "低步數日均", "高步數日均", "高 vs 低 (差)", "p 值"], cmpRows,
-      { numCols: [1, 2, 3, 4] });
-    // Plain-language summary
-    const sigBad = compareRows.filter((r) => Number.isFinite(r.t.p) && r.t.p < 0.05 &&
-      ((r.higherBetter && r.highMean < r.lowMean) || (!r.higherBetter && r.highMean > r.lowMean)));
-    if (sigBad.length) {
-      html += callout("warn",
-        `<strong>觀察</strong>　高步數日 ${sigBad.map((m) => m.label).join(" / ")} 顯著惡化 — 你的身體在大量行走時可能在累積代償，建議高量訓練後安排恢復日。`);
-    } else {
-      html += callout("good",
-        `<strong>觀察</strong>　高步數日步態指標沒有顯著惡化，代表你目前承受得住目前訓練量。`);
-    }
+    html += tableHtml(["指標", "走少日", "走多日", "差距"], cmpRows, { numCols: [1, 2, 3] });
+    html += `</details>`;
   }
 
   container.innerHTML = html;
