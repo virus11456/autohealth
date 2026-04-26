@@ -465,6 +465,14 @@ function metricCard({ chartId, label, unit, dates, raw, smooth, frameRows, basel
     </div>`;
 }
 
+// Plotly hover tooltip styled to match the dashboard's dark theme — by
+// default Plotly uses white-on-light which is unreadable here.
+const HOVER_LABEL = {
+  bgcolor: "#1c2230",
+  bordercolor: "#2a3140",
+  font: { color: "#e6e9ef", family: "inherit", size: 12 },
+};
+
 // Render a line chart with raw values connected, 30-day rolling mean
 // overlay, and a dashed horizontal "your average" reference line so users
 // can directly read "above or below personal baseline" at a glance.
@@ -503,6 +511,7 @@ function drawMetricChart(divId, dates, raw, smooth, color, opts = {}) {
     hovermode: "x unified",
     showlegend: false,
     shapes,
+    hoverlabel: HOVER_LABEL,
   }, { displaylogo: false, responsive: true, displayModeBar: false });
 }
 
@@ -564,6 +573,7 @@ function drawTriangleCombined(divId, dates, hrv, rhr, walking) {
     hovermode: "x unified",
     showlegend: true,
     legend: { orientation: "h", y: 1.05, x: 0.5, xanchor: "center" },
+    hoverlabel: HOVER_LABEL,
   }, { displaylogo: false, responsive: true });
 }
 
@@ -1109,6 +1119,7 @@ export function renderTask3(frame, container) {
         yaxis: { title: { text: "隔日 HRV (ms)", font: { size: 11 } },
                  gridcolor: "rgba(127,127,127,0.08)" },
         height: 320, showlegend: false,
+        hoverlabel: HOVER_LABEL,
       }, { displaylogo: false, responsive: true });
     }
   }
@@ -1688,6 +1699,7 @@ export function renderTask5(frame, container) {
         yaxis: { title: { text: "當晚睡眠分數平均", font: { size: 11 } },
                  gridcolor: "rgba(127,127,127,0.08)", range: [0, 100] },
         height: 260, showlegend: false,
+        hoverlabel: HOVER_LABEL,
       }, { displaylogo: false, responsive: true });
     }
     if (monthlyStd.length >= 2) {
@@ -1710,6 +1722,7 @@ export function renderTask5(frame, container) {
           yaxis: { title: { text: "上床時間 std (h)", font: { size: 11 } },
                    gridcolor: "rgba(127,127,127,0.08)" },
           height: 240, showlegend: false,
+          hoverlabel: HOVER_LABEL,
         }, { displaylogo: false, responsive: true });
       }
     }
@@ -1993,6 +2006,7 @@ export function renderTask6(frame, container) {
             line: { color: "var(--bad)", width: 1, dash: "dot" } },
         ],
         height: 320, showlegend: false,
+        hoverlabel: HOVER_LABEL,
       }, { displaylogo: false, responsive: true });
     }
   }
