@@ -1715,6 +1715,40 @@ function aggregateReadiness(components, weights) {
   return Math.max(0, Math.min(100, 50 + 12.5 * normalizedSum));
 }
 
+// Carry-forward variant: for a given day, look back up to `lookback` days for
+// the latest finite value of each component. Lets today's breakdown show
+// "RHR was 68 bpm two days ago" rather than just "no data" when today's
+// specific reading is missing. Returns { components, stale } where stale[k]
+// is the lag in days (0 if today, 1+ if pulled from earlier).
+function readinessComponentsCarryForward(frame, idx, lookback = 7) {
+  const clip = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const lookbackStart = Math.max(0, idx - lookback);
+  function latestFor(key) {
+    for (let i = idx; i >= lookbackStart; i--) {
+      const v = frame.rows[i][key];
+      if (Number.isFinite(v)) return { v, idx: i };
+    }
+    return null;
+  }
+  const map = {
+    hrv:   { key: "hrv_zscore30",                 transform: (v) => clip(v, -2, 2) },
+    rhr:   { key: "resting_hr_zscore30",          transform: (v) => clip(-v, -2, 2) },
+    sleep: { key: "sleep_score",                  transform: (v) => (v - 70) / 15 },
+    resp:  { key: "respiratory_zscore30",         transform: (v) => clip(-v, -2, 2) },
+    temp:  { key: "wrist_temp_delta_c_zscore30",  transform: (v) => clip(-Math.abs(v), -2, 0) },
+  };
+  const components = {};
+  const stale = {};
+  for (const [k, m] of Object.entries(map)) {
+    const r = latestFor(m.key);
+    if (r) {
+      components[k] = m.transform(r.v);
+      if (r.idx !== idx) stale[k] = idx - r.idx;
+    }
+  }
+  return { components, stale };
+}
+
 function readinessClassFromValue(v) {
   if (!Number.isFinite(v)) return { emoji: "⚪", label: "資料不足", cls: "empty", color: "var(--muted)" };
   if (v >= 75) return { emoji: "🟢", label: "綠燈", cls: "good", color: "var(--good)" };
@@ -1762,8 +1796,18 @@ export function renderTask6(frame, container) {
   }
   const today = readiness[todayIdx];
   const todayDate = frame.rows[todayIdx].date;
-  const todayClass = readinessClassFromValue(today.spec);
-  const todayComponentCount = Object.keys(today.components).length;
+
+  // Carry-forward components for today's display (handles cases where a
+  // specific indicator's reading is missing on the chosen "today" but was
+  // present a couple days ago — happens often with sparsely-sampled data
+  // like resting_hr or HRV from non-daily wear).
+  const carry = readinessComponentsCarryForward(frame, todayIdx, 7);
+  // Recompute spec score using the carry-forward components so the hero,
+  // breakdown table, and "today's driver" all match.
+  const specScoreCarry = aggregateReadiness(carry.components, READINESS_WEIGHTS.spec);
+  const specForHero = Number.isFinite(specScoreCarry) ? specScoreCarry : today.spec;
+  const todayClass = readinessClassFromValue(specForHero);
+  const todayComponentCount = Object.keys(carry.components).length;
 
   // Recent 7-day mean / prior 21-day mean (using spec weights)
   const specSeries = readiness.map((r) => r.spec);
@@ -1776,15 +1820,16 @@ export function renderTask6(frame, container) {
   const trend = (Number.isFinite(recent7Mean) && Number.isFinite(prior21Mean))
     ? recent7Mean - prior21Mean : NaN;
 
-  // Dominant driver today: which component is pulling spec score the most
-  // (positive contribution = pushes up; negative = pulls down)
+  // Dominant driver today (using carry-forward components so a missing-today
+  // signal that exists 2 days ago can still be the dominant driver).
   const todayContribs = [];
   for (const k of ["hrv", "rhr", "sleep", "resp", "temp"]) {
-    if (k in today.components) {
+    if (k in carry.components) {
       todayContribs.push({
         key: k, label: COMPONENT_LABEL[k],
-        value: today.components[k],
-        contribution: READINESS_WEIGHTS.spec[k] * today.components[k],
+        value: carry.components[k],
+        contribution: READINESS_WEIGHTS.spec[k] * carry.components[k],
+        staleDays: carry.stale[k] || 0,
       });
     }
   }
@@ -1814,7 +1859,7 @@ export function renderTask6(frame, container) {
   // Hero today's score
   html += `<div class="readiness-hero status-${todayClass.cls}">
     <div class="readiness-date muted">${todayDate}</div>
-    <div class="readiness-value" style="color:${todayClass.color}">${Number.isFinite(today.spec) ? today.spec.toFixed(0) : "—"}<span class="readiness-scale"> / 100</span></div>
+    <div class="readiness-value" style="color:${todayClass.color}">${Number.isFinite(specForHero) ? specForHero.toFixed(0) : "—"}<span class="readiness-scale"> / 100</span></div>
     <div class="readiness-band" style="color:${todayClass.color}">${todayClass.emoji} ${todayClass.label}</div>
     <div class="readiness-trend muted">
       近 7 天均：<strong>${Number.isFinite(recent7Mean) ? recent7Mean.toFixed(1) : "—"}</strong>　·
@@ -1858,22 +1903,25 @@ export function renderTask6(frame, container) {
   html += `<div id="t6-chart" class="task-chart"></div>`;
   html += `<p class="muted">在這個分析期間：🟢 綠燈 ${greens.length} 天 (${(greens.length / finiteIdx.length * 100).toFixed(0)}%)　·　🔴 紅燈 ${reds.length} 天 (${(reds.length / finiteIdx.length * 100).toFixed(0)}%)</p>`;
 
-  // Component breakdown — plain language version
+  // Component breakdown — plain language. Uses carry-forward so RHR / HRV
+  // readings from up to 7 days ago still count, with a stale annotation.
   html += `<h3>🧩 今天分數的拆解</h3>`;
-  html += `<p class="muted">每個項目對今天分數的影響：綠色 = 拉高分數、紅色 = 拉低分數。</p>`;
+  html += `<p class="muted">每個項目對今天分數的影響。如果某項今天沒讀到，會用最近 7 天內最後一次的讀數（顯示「N 天前」）。</p>`;
   const compRows = ["hrv", "rhr", "sleep", "resp", "temp"].map((k) => {
-    if (!(k in today.components)) {
-      return [COMPONENT_LABEL[k], "—", "<span class='muted'>沒資料，沒納入計算</span>"];
+    if (!(k in carry.components)) {
+      return [COMPONENT_LABEL[k], "—", "<span class='muted'>最近 7 天沒讀到</span>"];
     }
-    const c = today.components[k];
+    const c = carry.components[k];
     const contrib = READINESS_WEIGHTS.spec[k] * c;
     const word = c > 1.2  ? "🟢 比平常好很多" :
                  c > 0.3  ? "🟢 比平常好" :
                  c > -0.3 ? "🔵 跟平常差不多" :
                  c > -1.2 ? "🟡 比平常差" :
                             "🔴 比平常差很多";
+    const stale = carry.stale[k] || 0;
+    const staleNote = stale > 0 ? ` <span class="muted" style="font-size:0.8em;">（${stale} 天前）</span>` : "";
     const contribText = `<span style="color:${contrib >= 0 ? "var(--good)" : "var(--bad)"}">${contrib >= 0 ? "+" : ""}${contrib.toFixed(2)} 分</span>`;
-    return [COMPONENT_LABEL[k], word, contribText];
+    return [COMPONENT_LABEL[k], word + staleNote, contribText];
   });
   html += tableHtml(["項目", "今天表現", "對分數的影響"], compRows, { numCols: [2] });
 
