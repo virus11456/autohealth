@@ -22,9 +22,27 @@
 
 <main>
 
-<!-- Upload -->
-<div id="uploadCard" class="card">
-  <h2>1. 上傳 Apple Health 匯出檔</h2>
+<!-- Landing — only shown before upload. After upload, hidden by initDashboard. -->
+<div id="landingPage">
+
+  <!-- Hero -->
+  <section class="hero">
+    <h2 class="hero-title">把你的 Apple Health 變成「你身體的健康儀表板」</h2>
+    <p class="hero-sub">
+      上傳一次匯出檔，看心臟、睡眠、步態、節律、生病前兆 7 個面向的跨維度分析，
+      還能用 AI 直接問問題。<strong>所有處理都在你瀏覽器本地</strong>，資料不離開你的電腦。
+    </p>
+    <div class="hero-bullets">
+      <div><span class="hero-emoji">🔋</span><div><strong>身體狀態三角</strong><br>心跳變化、靜息、走路心跳一起看</div></div>
+      <div><span class="hero-emoji">💤</span><div><strong>睡眠 → 隔天精神</strong><br>找出你最值得優化的睡眠面向</div></div>
+      <div><span class="hero-emoji">🤒</span><div><strong>生病早警</strong><br>呼吸 + 體溫異常比體感早 1-2 天</div></div>
+      <div><span class="hero-emoji">✨</span><div><strong>AI 聊天問問題</strong><br>「最近會生病嗎？」直接問</div></div>
+    </div>
+  </section>
+
+  <!-- Upload card -->
+  <div id="uploadCard" class="card">
+    <h2>📤 上傳 Apple Health 匯出檔開始</h2>
   <div id="iosWarn" class="ios-warn" style="display:none;">
     <strong>📱 偵測到你正在用 iPhone / iPad</strong><br>
     Apple Health 的 export.zip 解壓後常常超過 500MB，iOS Safari
@@ -82,7 +100,94 @@
   <div class="muted" style="margin-top:14px">
     取得方式：iPhone「健康 App → 個人頭像 → 匯出所有健康資料」會產生 <code>匯出.zip</code>。
   </div>
-</div>
+  </div>  <!-- /uploadCard -->
+
+  <!-- 7 tasks preview -->
+  <section class="landing-section">
+    <h3 class="landing-section-title">🔍 你上傳後會看到什麼</h3>
+    <p class="landing-section-sub">7 個任務分頁，每個分頁回答一個具體問題。每個都是你按一下就看到結論、不用懂統計。</p>
+    <div class="task-preview-grid">
+      <div class="task-preview-card" style="--accent-c:#34c38f;">
+        <div class="tp-emoji">🔋</div>
+        <div class="tp-title">身體狀態三角</div>
+        <div class="tp-q">「我現在累不累？快感冒嗎？」</div>
+        <div class="tp-desc">心跳變化（HRV）+ 靜息心率 + 走路心跳三個訊號疊在一起看，三個同時惡化常比體感早 1-2 天出現。</div>
+      </div>
+      <div class="task-preview-card" style="--accent-c:#a78bfa;">
+        <div class="tp-emoji">💤</div>
+        <div class="tp-title">睡眠 → 隔天精神</div>
+        <div class="tp-q">「對我來說，睡眠哪個面向最值得優化？」</div>
+        <div class="tp-desc">比較總時長、深睡時長、深睡 + REM 比例，三個假設找出對你「隔天 HRV」影響最大的因素 + 行動建議。</div>
+      </div>
+      <div class="task-preview-card" style="--accent-c:#f0a020;">
+        <div class="tp-emoji">🚶</div>
+        <div class="tp-title">走路品質</div>
+        <div class="tp-q">「我走路有沒有偷偷在代償？」</div>
+        <div class="tp-desc">不對稱率、雙腳支撐、步速、步長、步態效率——舊傷、髖緊、腿力下降常先在這裡發出訊號，比膝蓋痛起來早幾週。</div>
+      </div>
+      <div class="task-preview-card" style="--accent-c:#fbbf24;">
+        <div class="tp-emoji">🌅</div>
+        <div class="tp-title">日照與作息</div>
+        <div class="tp-q">「我作息夠規律嗎？週末有恢復到嗎？」</div>
+        <div class="tp-desc">日照時間 vs 當晚睡眠分數、月度上床時間穩定度、週末 vs 平日全指標差異——生理節律的健檢。</div>
+      </div>
+      <div class="task-preview-card" style="--accent-c:#4f8cff;">
+        <div class="tp-emoji">✅</div>
+        <div class="tp-title">今日身體分數</div>
+        <div class="tp-q">「今天可以硬操嗎？該做重要決定嗎？」</div>
+        <div class="tp-desc">把 HRV、靜息、睡眠分數、呼吸、手腕體溫整合成 0-100 分。&gt; 75 = 綠燈、&lt; 40 = 紅燈，附 365 天走勢。</div>
+      </div>
+      <div class="task-preview-card" style="--accent-c:#ef4444;">
+        <div class="tp-emoji">🤒</div>
+        <div class="tp-title">生病早警</div>
+        <div class="tp-q">「我會不會 1-2 天後就感冒？」</div>
+        <div class="tp-desc">Apple Watch 研究指出呼吸頻率 + 手腕體溫雙雙異常常比體感發病早 1-2 天，這個分頁直接判斷今天有沒有警訊。</div>
+      </div>
+      <div class="task-preview-card task-preview-wide" style="--accent-c:#22d3ee;">
+        <div class="tp-emoji">✨</div>
+        <div class="tp-title">AI 聊天助手（可選）</div>
+        <div class="tp-q">「直接用嘴問就好。」</div>
+        <div class="tp-desc">填入你的 MiniMax token 後，AI 就看得到你最近 30 天的健康資料 + 今日快照。可以追問「最近會生病嗎？」「我該怎麼睡得更好？」「為什麼我最近這麼累？」等問題，多輪對話。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Privacy reassurance -->
+  <section class="landing-section">
+    <h3 class="landing-section-title">🔒 你的資料去哪裡？哪裡都沒去。</h3>
+    <div class="privacy-grid">
+      <div class="privacy-item">
+        <div class="pi-emoji">💻</div>
+        <div>
+          <strong>解析在你瀏覽器內進行</strong><br>
+          <span class="muted">XML 解壓、聚合、相關性分析全部用 JavaScript 在你電腦本地執行。儀表板沒有 server，你的資料根本沒地方可以「上傳」。</span>
+        </div>
+      </div>
+      <div class="privacy-item">
+        <div class="pi-emoji">🚫</div>
+        <div>
+          <strong>沒有後端、沒有資料庫、沒有 cookie</strong><br>
+          <span class="muted">純靜態網頁（GitHub Pages 託管）。打開 devtools 看 Network 分頁，你只會看到下載 HTML / JS / CSS，<strong>沒有任何上傳請求</strong>。</span>
+        </div>
+      </div>
+      <div class="privacy-item">
+        <div class="pi-emoji">✨</div>
+        <div>
+          <strong>唯一例外：AI 聊天</strong><br>
+          <span class="muted">啟用 AI 解讀後，那次的健康摘要會送到你選的 LLM。token 只存瀏覽器 localStorage，不啟用就跟原本一樣不傳任何東西。</span>
+        </div>
+      </div>
+      <div class="privacy-item">
+        <div class="pi-emoji">📂</div>
+        <div>
+          <strong>原始碼公開</strong><br>
+          <span class="muted">在 <a href="https://github.com/virus11456/autohealth" target="_blank" rel="noopener">GitHub</a> 上能看到所有處理邏輯，「資料絕對沒被偷偷上傳」可以自己驗證。</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>  <!-- /landingPage -->
 
 <!-- Dashboard -->
 <div id="dashboard" style="display:none">

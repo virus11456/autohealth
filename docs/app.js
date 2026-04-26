@@ -149,7 +149,12 @@ async function loadFile(file) {
 
 function initDashboard() {
   $("#dashboard").style.display = "block";
-  $("#uploadCard").style.display = "none";
+  // Hide the entire landing page (hero + upload + task preview + privacy)
+  // not just the upload card — once data is loaded the explanatory content
+  // is no longer needed.
+  const landing = $("#landingPage");
+  if (landing) landing.style.display = "none";
+  else $("#uploadCard").style.display = "none";  // legacy fallback
   // Show demo banner if we loaded the bundled sample
   const demoBanner = $("#demoBanner");
   if (demoBanner && state.isDemo) demoBanner.style.display = "flex";
