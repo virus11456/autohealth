@@ -1,6 +1,6 @@
 // Cross-dimensional analysis: Spearman correlation, lagged correlation,
 // rolling-baseline anomaly detection, and Chinese narrative insights.
-import { columnValues } from "./aggregator.js";
+import { columnValues } from "./aggregator.js?v=20260427";
 
 // Phase 3 composite scores. Mirror healthkit/analyzer.py:
 // - Readiness: HRV (+), resting_hr (-), sleep_score (+), respiratory (penalty for either deviation)

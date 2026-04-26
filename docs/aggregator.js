@@ -1,5 +1,5 @@
 // Build the daily wide frame from the streaming-aggregated parser output.
-import { SUPPORTED_METRICS } from "./parser.js";
+import { SUPPORTED_METRICS } from "./parser.js?v=20260427";
 
 // Metrics that get a 30-day rolling baseline + z-score column. Phase 3
 // Readiness/Environment scores read these baselines.

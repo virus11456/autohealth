@@ -2,8 +2,8 @@
 // takes the daily frame and a DOM container, computes everything from scratch,
 // and writes the result. Tasks 1-7 follow the brief in the project README.
 
-import { columnValues, rollingMean } from "./aggregator.js";
-import { spearman, labelOf } from "./analyzer.js";
+import { columnValues, rollingMean } from "./aggregator.js?v=20260427";
+import { spearman, labelOf } from "./analyzer.js?v=20260427";
 
 // ============================================================
 // Stat primitives

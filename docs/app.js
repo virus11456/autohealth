@@ -1,15 +1,15 @@
-import { parseExport } from "./parser.js";
-import { buildDailyFrame } from "./aggregator.js";
-import { computeReadiness, computeEnvStress } from "./analyzer.js";
+import { parseExport } from "./parser.js?v=20260427";
+import { buildDailyFrame } from "./aggregator.js?v=20260427";
+import { computeReadiness, computeEnvStress } from "./analyzer.js?v=20260427";
 import {
   getSettings, setSettings, clearSettings, isConfigured,
   testConnection, callMinimax, callMinimaxChat,
   buildCompactSummaryPrompt, buildDeepAnalysisPrompt, buildChatSystem,
-} from "./ai.js";
+} from "./ai.js?v=20260427";
 import {
   renderTask1, renderTask2, renderTask3, renderTask4,
   renderTask5, renderTask6, renderTask7,
-} from "./tasks.js";
+} from "./tasks.js?v=20260427";
 
 const state = {
   parsed: null,
