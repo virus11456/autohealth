@@ -1923,32 +1923,62 @@ function isRecoveryAnomaly(hrvZ, rhrZ, i) {
 export function renderTask7(frame, container) {
   if (!frame || frame.rows.length < 30) {
     container.innerHTML = `<h2 class="task-title">🤒 任務 7：生病早警</h2>` +
-      emptyState("資料量太少，至少需要 30 天讓 baseline + z-score 形成。");
+      emptyState("資料量太少，至少需要 30 天讓 baseline 形成。");
     return;
   }
 
-  const required = ["respiratory_zscore30", "wrist_temp_delta_c_zscore30",
-                    "hrv_zscore30", "resting_hr_zscore30"];
-  const missing = required.filter((c) => !frame.columns.includes(c) ||
-    !columnValues(frame, c).some(Number.isFinite));
-  if (missing.length) {
-    container.innerHTML = `<h2 class="task-title">🤒 任務 7：生病早警</h2>` +
-      callout("warn", `<strong>⚠ 缺少 z-score：</strong>${missing.join(" / ")}<br>` +
-        `需要 30 天 baseline 才會有 z-score。確認你資料裡有「呼吸頻率」+「睡眠手腕溫差」+「HRV」+「靜息心率」並且累積 ≥ 30 天。`);
-    return;
-  }
-
+  // Required (always): respiratory z-score
+  // Optional: wrist_temp_delta_c_zscore30 (Apple Watch Series 8+).
+  // Without temp we fall back to "呼吸 + 心跳訊號" dual mode instead of
+  // "呼吸 + 體溫" — looser but still actionable.
   const respZ = columnValues(frame, "respiratory_zscore30");
-  const tempZ = columnValues(frame, "wrist_temp_delta_c_zscore30");
   const hrvZ = columnValues(frame, "hrv_zscore30");
   const rhrZ = columnValues(frame, "resting_hr_zscore30");
+  const hasResp = respZ.some(Number.isFinite);
+  const hasHrv = hrvZ.some(Number.isFinite);
+  const hasRhr = rhrZ.some(Number.isFinite);
 
-  // 1. Warning days: respiratory_z > 1 AND wrist_temp_delta_z > 1 同時
+  if (!hasResp) {
+    container.innerHTML = `<h2 class="task-title">🤒 任務 7：生病早警</h2>` +
+      callout("warn",
+        `<strong>⚠ 缺少呼吸頻率資料</strong><br>` +
+        `這個分頁需要至少呼吸頻率 30 天的 baseline。請確認 Apple Watch 睡眠時有戴。`);
+    return;
+  }
+  if (!hasHrv && !hasRhr) {
+    container.innerHTML = `<h2 class="task-title">🤒 任務 7：生病早警</h2>` +
+      callout("warn",
+        `<strong>⚠ 缺少 HRV 或靜息心率</strong><br>` +
+        `要判斷「警戒後是否真的進入發病期」需要其中一個指標。`);
+    return;
+  }
+
+  const hasWristTemp = frame.columns.includes("wrist_temp_delta_c_zscore30") &&
+    columnValues(frame, "wrist_temp_delta_c_zscore30").some(Number.isFinite);
+  const tempZ = hasWristTemp ? columnValues(frame, "wrist_temp_delta_c_zscore30") : null;
+  const detectionMode = hasWristTemp ? "temp" : "recovery";
+
+  // 1. Warning days
+  //    Mode 1 (preferred — Apple Watch Series 8+): respiratory_z > 1 AND wrist_temp_z > 1
+  //    Mode 2 (fallback when no wrist temp): respiratory_z > 1 AND
+  //                                          (HRV_z < -1 OR RHR_z > +1)
+  //    Fallback is looser but still produces actionable signals.
   const warningDays = [];
   for (let i = 0; i < frame.rows.length; i++) {
-    if (Number.isFinite(respZ[i]) && Number.isFinite(tempZ[i]) &&
-        respZ[i] > 1 && tempZ[i] > 1) {
-      warningDays.push({ idx: i, date: frame.rows[i].date, respZ: respZ[i], tempZ: tempZ[i] });
+    if (!Number.isFinite(respZ[i]) || respZ[i] <= 1) continue;
+    if (hasWristTemp) {
+      if (Number.isFinite(tempZ[i]) && tempZ[i] > 1) {
+        warningDays.push({ idx: i, date: frame.rows[i].date, respZ: respZ[i], tempZ: tempZ[i] });
+      }
+    } else {
+      const rhrSig = Number.isFinite(rhrZ[i]) && rhrZ[i] > 1;
+      const hrvSig = Number.isFinite(hrvZ[i]) && hrvZ[i] < -1;
+      if (rhrSig || hrvSig) {
+        warningDays.push({
+          idx: i, date: frame.rows[i].date,
+          respZ: respZ[i], rhrZ: rhrZ[i], hrvZ: hrvZ[i],
+        });
+      }
     }
   }
 
@@ -1998,100 +2028,112 @@ export function renderTask7(frame, container) {
   }
   const sensitivity = onsetEvents.length > 0 ? warnedEvents / onsetEvents.length : NaN;
 
-  // Today's row (latest finite z-score for the warning conditions)
+  // Today's row + status
   let todayIdx = -1;
   for (let i = frame.rows.length - 1; i >= 0; i--) {
-    if (Number.isFinite(respZ[i]) && Number.isFinite(tempZ[i])) { todayIdx = i; break; }
+    if (Number.isFinite(respZ[i])) { todayIdx = i; break; }
   }
-  const isTodayWarning = todayIdx >= 0 && respZ[todayIdx] > 1 && tempZ[todayIdx] > 1;
-  const todayCard = isTodayWarning
-    ? { emoji: "🔴", label: "警戒日", cls: "alert" }
-    : { emoji: "🟢", label: "正常", cls: "good" };
+  let isTodayWarning = false;
+  if (todayIdx >= 0 && respZ[todayIdx] > 1) {
+    if (hasWristTemp) {
+      isTodayWarning = Number.isFinite(tempZ[todayIdx]) && tempZ[todayIdx] > 1;
+    } else {
+      const rhrSig = Number.isFinite(rhrZ[todayIdx]) && rhrZ[todayIdx] > 1;
+      const hrvSig = Number.isFinite(hrvZ[todayIdx]) && hrvZ[todayIdx] < -1;
+      isTodayWarning = rhrSig || hrvSig;
+    }
+  }
+
+  // Recent 14 days warning count (for context — "最近常常警戒嗎")
+  const recent14WarningCount = warningDays.filter((w) => w.idx >= frame.rows.length - 14).length;
 
   // ---- Render ----
   let html = `<h2 class="task-title">🤒 任務 7：生病早警</h2>`;
-  html += `<p class="task-intro">Apple Watch 研究顯示「呼吸頻率上升 + 手腕體溫上升」常比體感發病早 1-2 天。這個分頁找出歷史警戒日 + 驗證對你個人的預警命中率。</p>`;
+  html += `<p class="task-intro">${
+    hasWristTemp
+      ? "結合你的呼吸頻率 + 手腕體溫，找「比身體感覺到生病早 1-2 天」的訊號。"
+      : "你的 Apple Watch 沒有體溫資料（需要 Series 8+），改用「呼吸 + HRV/心率」雙訊號替代——較寬鬆但仍能抓到變化。"
+  }</p>`;
 
-  // Top 3 stat cards
-  html += `<div class="metric-grid">`;
-  html += statCard({
-    label: "今日狀態",
-    value: todayCard.emoji,
-    subtitle: todayIdx >= 0
-      ? `${frame.rows[todayIdx].date}　·　呼吸 z = ${respZ[todayIdx].toFixed(2)}　·　體溫 z = ${tempZ[todayIdx].toFixed(2)}`
-      : "缺資料",
-    status: todayCard,
-    hint: isTodayWarning
-      ? "建議減量、提早休息、補水；2-3 天內再觀察 HRV / RHR"
-      : "兩個早警訊號都在正常範圍",
-  });
-  html += statCard({
-    label: "歷史警戒日",
-    value: warningDays.length.toString(),
-    subtitle: `分析期間 ${frame.rows.length} 天 · 共 ${onsetEvents.length} 次發病事件`,
-    status: warningDays.length === 0
-      ? { emoji: "🟢", label: "無", cls: "good" }
-      : { emoji: "🔵", label: "有紀錄", cls: "fair" },
-    hint: "警戒日 = 呼吸頻率 z > 1 且 手腕體溫 z > 1 同時",
-  });
-  html += statCard({
-    label: "預警敏感度",
-    value: Number.isFinite(sensitivity) ? (sensitivity * 100).toFixed(0) + "%" : "—",
-    subtitle: `${warnedEvents} / ${onsetEvents.length} 次發病事件，警戒日在 1-3 天前先觸發`,
-    status: !Number.isFinite(sensitivity)
-      ? { emoji: "⚪", label: "無事件", cls: "empty" }
-      : sensitivity >= 0.7 ? { emoji: "🟢", label: "可信", cls: "good" }
-      : sensitivity >= 0.4 ? { emoji: "🔵", label: "中等", cls: "fair" }
-      : { emoji: "🟡", label: "偏低", cls: "low" },
-    hint: "對你而言，呼吸 + 體溫雙警對「真的發病」的命中率",
-  });
-  html += `</div>`;
+  // Top verdict
+  let verdict;
+  if (todayIdx < 0) {
+    verdict = { cls: "empty", emoji: "⚪", headline: "今日沒資料",
+      detail: "需要呼吸頻率讀取才能判斷。" };
+  } else if (isTodayWarning) {
+    const subSignals = [];
+    subSignals.push(`呼吸頻率比平常高（${respZ[todayIdx].toFixed(2)}σ）`);
+    if (hasWristTemp && Number.isFinite(tempZ[todayIdx]))
+      subSignals.push(`手腕體溫比平常高（${tempZ[todayIdx].toFixed(2)}σ）`);
+    if (!hasWristTemp && Number.isFinite(rhrZ[todayIdx]) && rhrZ[todayIdx] > 1)
+      subSignals.push(`靜息心率比平常高（${rhrZ[todayIdx].toFixed(2)}σ）`);
+    if (!hasWristTemp && Number.isFinite(hrvZ[todayIdx]) && hrvZ[todayIdx] < -1)
+      subSignals.push(`HRV 比平常低（${hrvZ[todayIdx].toFixed(2)}σ）`);
+    verdict = {
+      cls: "alert", emoji: "🔴",
+      headline: "今天身體有發病前兆",
+      detail: `${subSignals.join("、")}。這種訊號常常比你自己感覺到不舒服早 1-2 天。`,
+      action: "減少行程、早點睡、多喝水。如果接下來 2-3 天 HRV 還是低、靜息心率還是高，大概率正在進入發病期。",
+    };
+  } else {
+    verdict = {
+      cls: "good", emoji: "🟢",
+      headline: "今天沒有發病前兆",
+      detail: hasWristTemp
+        ? "呼吸頻率和手腕體溫都在你的正常範圍內。"
+        : "呼吸頻率正常，HRV / 心率也沒明顯偏離。",
+      action: "正常作息就好。",
+    };
+  }
+  html += verdictPanel(verdict);
 
-  // Today warning callout (prominent)
+  // Body effect explanation
   if (isTodayWarning) {
-    html += callout("alert",
-      `<strong>⚠ 今日（${frame.rows[todayIdx].date}）為警戒日</strong>　呼吸 z = ${respZ[todayIdx].toFixed(2)}σ、手腕體溫 z = ${tempZ[todayIdx].toFixed(2)}σ。建議減少行程、提早睡、補水，明後兩天再觀察 HRV / 靜息心率走勢；如果接下來 3 天 HRV 持續低於基線，大概率正在進入發病期。`);
+    html += `<h3>💡 這個訊號代表什麼</h3>`;
+    html += `<div class="effects-list">`;
+    html += `<div class="effect-item bad">
+      <div class="effect-title">⚠ 你的身體已經在打仗了</div>
+      <div class="effect-body">呼吸頻率上升 + ${hasWristTemp ? "體溫上升" : "心率不正常"} 是免疫系統開始反應的訊號，比鼻塞 / 喉嚨痛 / 發燒早 1-2 天出現。可能的原因：感冒 / 流感前期、過敏、發炎、過度疲勞、月經週期、或最近喝太多酒 / 壓力大。</div>
+    </div>`;
+    html += `<div class="effect-item bad">
+      <div class="effect-title">⚠ 接下來 2-3 天可能會：</div>
+      <div class="effect-body">頭痛、肌肉痠痛、想睡、運動表現掉一半、決策變慢、情緒不穩。建議今晚減少社交、早點睡，明天起再觀察。</div>
+    </div>`;
+    html += `</div>`;
   }
 
-  // Warning days history
-  html += `<h3>📋 歷史警戒日 + 後續發病判定</h3>`;
-  html += `<p class="muted">每個警戒日往後看 7 天，找最長的「恢復異常」連續天數（HRV z &lt; -1 或 RHR z &gt; +1）。≥ 3 天 = 真的進展為發病模式。</p>`;
-  if (!warningDays.length) {
-    html += `<p class="muted">分析期間沒有偵測到警戒日。</p>`;
+  // Recent 14 days context
+  html += `<h3>📊 最近 14 天概覽</h3>`;
+  if (recent14WarningCount === 0) {
+    html += `<p class="muted">最近 14 天沒有警戒日，身體狀態穩定。</p>`;
+  } else if (recent14WarningCount <= 2) {
+    html += callout("info", `最近 14 天有 <strong>${recent14WarningCount}</strong> 天警戒——可能是壓力 / 月經週期 / 短暫疲勞造成的雜訊，未必真的會生病。`);
   } else {
+    html += callout("low", `最近 14 天有 <strong>${recent14WarningCount}</strong> 天警戒，比一般人多。可能在累積過勞或免疫力長期偏低，建議檢視最近的睡眠、運動量、飲食。`);
+  }
+
+  // Optional details: power user disclosure
+  html += `<details style="margin-top:14px;"><summary class="muted" style="cursor:pointer; font-size:0.85rem;">想看歷史紀錄（共 ${warningDays.length} 個警戒日，${onsetEvents.length} 次發病事件）</summary>`;
+  if (warningDays.length) {
     const outcomeMap = {
-      onset:   { color: "var(--bad)",  text: (n) => `✗ 進展為發病 (${n} 天連續異常)` },
-      partial: { color: "var(--warn)", text: (n) => `△ 部分異常 (${n} 天，未連續 3)` },
+      onset:   { color: "var(--bad)",  text: (n) => `✗ 進展為發病（${n} 天連續異常）` },
+      partial: { color: "var(--warn)", text: (n) => `△ 部分異常（${n} 天）` },
       none:    { color: "var(--good)", text: () => "✓ 未進展" },
-      ongoing: { color: "var(--info)", text: () => "… 觀察中（後 7 天還沒過完）" },
+      ongoing: { color: "var(--info)", text: () => "… 觀察中" },
     };
     const rows = warningDays.slice().reverse().slice(0, 30).map((w) => {
       const o = outcomeMap[w.outcome];
       return [
         w.date,
-        w.respZ.toFixed(2) + "σ",
-        w.tempZ.toFixed(2) + "σ",
         `<span style="color:${o.color}">${o.text(w.postRun)}</span>`,
       ];
     });
-    html += tableHtml(["日期", "呼吸 z", "體溫 z", "後 7 天判定"], rows, { numCols: [1, 2] });
-    if (warningDays.length > 30) html += `<p class="muted">（顯示最近 30 筆，共 ${warningDays.length} 筆）</p>`;
+    html += tableHtml(["警戒日", "後續結果"], rows, {});
   }
-
-  // Onset events history (with predictive matching)
-  html += `<h3>📅 歷史發病事件（≥ 5 天恢復異常）</h3>`;
-  if (!onsetEvents.length) {
-    html += `<p class="muted">分析期間沒有偵測到 ≥ 5 天連續恢復異常的事件。</p>`;
-  } else {
-    const rows = onsetEvents.slice().reverse().map((ev) => [
-      `${frame.rows[ev.start].date} → ${frame.rows[ev.end].date}`,
-      `${ev.len} 天`,
-      ev.warning
-        ? `<span style="color:var(--good)">✓ ${ev.warning.day} 提前 ${ev.warning.lead} 天</span>`
-        : `<span style="color:var(--bad)">✗ 沒有 1-3 天前的警戒</span>`,
-    ]);
-    html += tableHtml(["事件期間", "持續", "警戒日預測"], rows, { numCols: [1] });
+  if (Number.isFinite(sensitivity)) {
+    html += `<p class="muted" style="margin-top:8px;">對你的歷史資料，這個早警系統的命中率是 <strong>${(sensitivity * 100).toFixed(0)}%</strong>（${warnedEvents} / ${onsetEvents.length} 次真實發病有在 1-3 天前先觸發）。</p>`;
   }
+  html += `</details>`;
 
   container.innerHTML = html;
 }
