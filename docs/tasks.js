@@ -1578,9 +1578,36 @@ export function renderTask5(frame, container) {
     html += `</div>`;
   }
 
-  // Daylight bin (visual is intuitive)
-  html += `<h3>☀ 曬越多太陽 → 當晚睡得越好嗎？</h3>`;
-  html += `<p class="muted">把每天的日照時間分成 4 段，看當晚的睡眠分數。</p>`;
+  // Daylight bin → sleep_score: mean per bin as a bar chart (was boxplot,
+  // hard to read for non-stats audience). Plus a plain-language verdict.
+  html += `<h3>☀ 曬太陽 vs 當晚睡眠</h3>`;
+  html += `<p class="muted">把每天的日照時間分成 4 段，看當晚的睡眠分數平均。理想：日照越多，柱子越高。</p>`;
+  // Compute valid bins with adequate sample sizes
+  const validBins = daylightBins
+    .map((b) => ({ ...b, mean: b.scores.length ? meanFinite(b.scores) : NaN }))
+    .filter((b) => b.scores.length >= 3);
+  // Verdict: read the data
+  if (validBins.length >= 2) {
+    const sortedByDaylight = validBins.slice();
+    const lowest = sortedByDaylight[0]; // smallest daylight bin
+    const highest = sortedByDaylight[sortedByDaylight.length - 1]; // largest
+    const diff = highest.mean - lowest.mean;
+    let cls, headline, detail;
+    if (diff > 5) {
+      cls = "good";
+      headline = `✓ 曬太陽越多，你睡得越好`;
+      detail = `日照 ${highest.label} 的當晚睡眠分數平均 ${highest.mean.toFixed(0)}，比日照 ${lowest.label} 高 ${diff.toFixed(0)} 分。多曬太陽幫助睡眠。`;
+    } else if (diff < -5) {
+      cls = "low";
+      headline = `△ 你資料中：曬越多太陽，睡得反而 不好`;
+      detail = `日照 ${highest.label} 的睡眠分數平均 ${highest.mean.toFixed(0)}，比日照 ${lowest.label} 低 ${Math.abs(diff).toFixed(0)} 分。可能原因：曬太多太陽的日子常常也是運動量大、外出久 → 身體比較累但容易過度興奮影響睡眠；或週末日照高但作息不固定。`;
+    } else {
+      cls = "info";
+      headline = `△ 沒看出明顯差別`;
+      detail = `各日照區間的睡眠分數平均差不多（差 ${Math.abs(diff).toFixed(0)} 分以內）。對你而言日照多寡不是睡眠分數的主要影響因素。`;
+    }
+    html += callout(cls, `<strong>${headline}</strong><br>${detail}`);
+  }
   html += tableHtml(["日照", "天數", "當晚睡眠分數平均"],
     daylightBins.map((b) => [b.label, b.scores.length,
       b.scores.length ? meanFinite(b.scores).toFixed(1) : "—"]),
@@ -1640,18 +1667,27 @@ export function renderTask5(frame, container) {
   if (typeof Plotly !== "undefined") {
     const binDiv = document.getElementById("t5-bin");
     if (binDiv) {
-      const traces = daylightBins.filter((b) => b.scores.length).map((b) => ({
-        type: "box", y: b.scores, name: b.label,
-        marker: { color: b.color }, line: { color: b.color },
-        boxpoints: "outliers", boxmean: true,
-      }));
-      Plotly.newPlot(binDiv, traces, {
+      // Simple bar chart of mean per bin — much easier to read than a boxplot
+      // for the target audience.
+      const present = daylightBins.filter((b) => b.scores.length);
+      const trace = {
+        type: "bar",
+        x: present.map((b) => b.label),
+        y: present.map((b) => meanFinite(b.scores)),
+        marker: { color: present.map((b) => b.color) },
+        text: present.map((b) => `${b.scores.length} 天<br>平均 ${meanFinite(b.scores).toFixed(0)}`),
+        textposition: "outside",
+        hovertemplate: "%{x}<br>平均睡眠分數 %{y:.1f}<br>n=%{text}<extra></extra>",
+      };
+      Plotly.newPlot(binDiv, [trace], {
         paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
         font: { color: "#e6e9ef", family: "inherit", size: 11 },
         margin: { l: 50, r: 20, t: 20, b: 40 },
-        xaxis: { title: { text: "日照區間", font: { size: 11 } }, gridcolor: "rgba(127,127,127,0.08)" },
-        yaxis: { title: { text: "當晚睡眠分數", font: { size: 11 } }, gridcolor: "rgba(127,127,127,0.08)" },
-        height: 280, showlegend: false,
+        xaxis: { title: { text: "日照區間", font: { size: 11 } },
+                 gridcolor: "rgba(127,127,127,0.08)" },
+        yaxis: { title: { text: "當晚睡眠分數平均", font: { size: 11 } },
+                 gridcolor: "rgba(127,127,127,0.08)", range: [0, 100] },
+        height: 260, showlegend: false,
       }, { displaylogo: false, responsive: true });
     }
     if (monthlyStd.length >= 2) {

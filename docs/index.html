@@ -151,7 +151,27 @@
       <button class="icon-btn" id="closeSettings" title="關閉">×</button>
     </div>
     <div class="modal-body">
-      <h3>MiniMax AI</h3>
+      <h3 style="margin-top: 0;">👤 個人資料</h3>
+      <div class="muted" style="margin-bottom:10px;">
+        年齡用於對照「同年齡標準範圍」，特別是 HRV 跟心適能（VO2 Max）跟年齡關係很大。
+        只存在你瀏覽器，不會送出。
+      </div>
+      <label>
+        年齡（選填）
+        <input type="number" id="cfgAge" min="10" max="120" placeholder="例如 35" autocomplete="off" />
+        <span class="muted">沒填就用一般成人範圍</span>
+      </label>
+      <label>
+        生理性別（選填）
+        <select id="cfgSex" style="display: block; width: 100%; margin-top: 4px; padding: 7px 10px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-size: 0.9rem;">
+          <option value="">不指定</option>
+          <option value="male">男</option>
+          <option value="female">女</option>
+        </select>
+        <span class="muted">主要影響心適能標準範圍</span>
+      </label>
+
+      <h3>🤖 MiniMax AI</h3>
       <div class="muted" style="margin-bottom:10px;">
         Token 只存在你瀏覽器的 localStorage，不會送到任何第三方伺服器（除了你選定的 LLM 服務商）。
       </div>

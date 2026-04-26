@@ -152,6 +152,20 @@ function applyFilter() {
   renderVitalsBar();
 }
 
+// User profile (age / sex) — used to pick age-stratified reference ranges
+// for HRV and VO2 Max. Only persists to localStorage.
+const PROFILE_KEY = "autohealth.profile.v1";
+function getProfile() {
+  try { return JSON.parse(localStorage.getItem(PROFILE_KEY) || "{}"); }
+  catch { return {}; }
+}
+function setProfile(p) {
+  const clean = {};
+  if (Number.isFinite(+p.age) && p.age >= 10 && p.age <= 120) clean.age = +p.age;
+  if (p.sex === "male" || p.sex === "female") clean.sex = p.sex;
+  localStorage.setItem(PROFILE_KEY, JSON.stringify(clean));
+}
+
 const VITALS_ITEMS = [
   { key: "hr",          label: "平均心率",     unit: "bpm",        digits: 0 },
   { key: "resting_hr",  label: "平均靜息心率", unit: "bpm",        digits: 0 },
@@ -189,7 +203,17 @@ const VITAL_REFERENCES = {
     },
   },
   hrv: {
-    normal: [25, 80], safe: [15, 150],
+    // SDNN ms by age tier — generic adult, sex-agnostic.
+    // Source: HRV declines steadily with age; ranges from various reviews.
+    byAge: [
+      { upTo: 30,       normal: [50, 100], safe: [25, 150] },
+      { upTo: 40,       normal: [40, 90],  safe: [22, 130] },
+      { upTo: 50,       normal: [35, 75],  safe: [20, 110] },
+      { upTo: 60,       normal: [30, 65],  safe: [18, 100] },
+      { upTo: 70,       normal: [25, 55],  safe: [15, 90]  },
+      { upTo: Infinity, normal: [20, 45],  safe: [12, 80]  },
+    ],
+    fallback: { normal: [25, 80], safe: [15, 150] },
     explain: {
       low:  "自律神經緊繃，常見於壓力 / 過勞 / 老化 / 睡眠不足",
       high: "恢復力很好（少見偏高，通常是好事）",
@@ -204,12 +228,39 @@ const VITAL_REFERENCES = {
     },
   },
   vo2max: {
-    normal: [28, 55], safe: [18, 70],
+    // Generic age-tier ranges. Sex-stratified via bySexAge below.
+    byAge: [
+      { upTo: 30,       normal: [38, 55], safe: [25, 70] },
+      { upTo: 40,       normal: [34, 50], safe: [22, 65] },
+      { upTo: 50,       normal: [31, 46], safe: [20, 60] },
+      { upTo: 60,       normal: [28, 42], safe: [18, 55] },
+      { upTo: 70,       normal: [25, 38], safe: [16, 50] },
+      { upTo: Infinity, normal: [22, 34], safe: [14, 45] },
+    ],
+    bySexAge: {
+      male: [
+        { upTo: 30,       normal: [42, 60], safe: [28, 75] },
+        { upTo: 40,       normal: [38, 54], safe: [25, 68] },
+        { upTo: 50,       normal: [34, 48], safe: [22, 62] },
+        { upTo: 60,       normal: [30, 44], safe: [20, 56] },
+        { upTo: 70,       normal: [27, 39], safe: [17, 50] },
+        { upTo: Infinity, normal: [24, 35], safe: [15, 45] },
+      ],
+      female: [
+        { upTo: 30,       normal: [35, 50], safe: [22, 65] },
+        { upTo: 40,       normal: [31, 46], safe: [20, 58] },
+        { upTo: 50,       normal: [28, 42], safe: [18, 52] },
+        { upTo: 60,       normal: [25, 38], safe: [16, 48] },
+        { upTo: 70,       normal: [22, 34], safe: [14, 42] },
+        { upTo: Infinity, normal: [20, 30], safe: [12, 38] },
+      ],
+    },
+    fallback: { normal: [28, 55], safe: [18, 70] },
     explain: {
       low:  "心肺體能偏低，規律有氧運動可改善（每週 150 分鐘中強度）",
       high: "心肺體能很好",
     },
-    note: "VO2 Max 跟年齡 / 性別關係大；< 30 歲普遍 > 40，60 歲普遍 > 30 就 OK",
+    note: "VO2 Max 隨年齡每 10 年自然下降約 10%",
   },
   respiratory: {
     normal: [12, 20], safe: [10, 24],
@@ -227,12 +278,32 @@ const VITAL_REFERENCES = {
   },
 };
 
-function vitalStatus(value, ref) {
-  if (!Number.isFinite(value) || !ref) return { cls: "empty", text: "—", direction: null };
-  if (value < ref.safe[0])   return { cls: "alert", text: "⚠ 太低", direction: "low" };
-  if (value > ref.safe[1])   return { cls: "alert", text: "⚠ 太高", direction: "high" };
-  if (value < ref.normal[0]) return { cls: "low",   text: "↓ 偏低", direction: "low" };
-  if (value > ref.normal[1]) return { cls: "low",   text: "↑ 偏高", direction: "high" };
+// Pick the right range tier given user's profile. Returns the resolved
+// {normal, safe, source} where source is "age" / "sex+age" / "generic".
+function resolveRanges(ref, profile) {
+  if (!ref) return null;
+  if (ref.bySexAge && profile?.sex && Number.isFinite(profile?.age)) {
+    const list = ref.bySexAge[profile.sex];
+    if (list) {
+      const tier = list.find((t) => profile.age <= t.upTo);
+      if (tier) return { normal: tier.normal, safe: tier.safe, source: "sex+age" };
+    }
+  }
+  if (ref.byAge && Number.isFinite(profile?.age)) {
+    const tier = ref.byAge.find((t) => profile.age <= t.upTo);
+    if (tier) return { normal: tier.normal, safe: tier.safe, source: "age" };
+  }
+  if (ref.fallback) return { ...ref.fallback, source: "generic" };
+  if (ref.normal && ref.safe) return { normal: ref.normal, safe: ref.safe, source: "generic" };
+  return null;
+}
+
+function vitalStatus(value, range) {
+  if (!Number.isFinite(value) || !range) return { cls: "empty", text: "—", direction: null };
+  if (value < range.safe[0])   return { cls: "alert", text: "⚠ 太低", direction: "low" };
+  if (value > range.safe[1])   return { cls: "alert", text: "⚠ 太高", direction: "high" };
+  if (value < range.normal[0]) return { cls: "low",   text: "↓ 偏低", direction: "low" };
+  if (value > range.normal[1]) return { cls: "low",   text: "↑ 偏高", direction: "high" };
   return { cls: "good", text: "✓ 正常", direction: null };
 }
 
@@ -241,10 +312,14 @@ function renderVitalsBar() {
   const periodEl = $("#vitalsPeriod");
   if (!grid || !state.filtered) return;
 
+  const profile = getProfile();
   const rows = state.filtered.rows;
   if (periodEl) {
+    const profileTag = Number.isFinite(profile.age)
+      ? `　·　年齡 ${profile.age}${profile.sex === "male" ? " · 男" : profile.sex === "female" ? " · 女" : ""} 標準`
+      : "";
     periodEl.textContent = rows.length
-      ? `${rows[0].date} → ${rows[rows.length - 1].date}　·　${rows.length} 天`
+      ? `${rows[0].date} → ${rows[rows.length - 1].date}　·　${rows.length} 天${profileTag}`
       : "區間無資料";
   }
 
@@ -259,9 +334,12 @@ function renderVitalsBar() {
     const isEmpty = !Number.isFinite(avg);
     const display = isEmpty ? "—" : avg.toFixed(it.digits);
     const ref = VITAL_REFERENCES[it.key];
-    const status = vitalStatus(avg, ref);
-    const refRange = ref
-      ? `一般成人 ${ref.normal[0]}–${ref.normal[1]} ${it.unit}`
+    const range = resolveRanges(ref, profile);
+    const status = vitalStatus(avg, range);
+    const refRange = range
+      ? `${range.source === "sex+age" ? `${profile.age}歲${profile.sex === "male" ? "男" : "女"}` :
+          range.source === "age"     ? `${profile.age}歲` :
+                                       "一般成人"} ${range.normal[0]}–${range.normal[1]} ${it.unit}`
       : "";
     const hint = (ref && status.direction) ? ref.explain[status.direction] : "";
     const note = ref?.note;
@@ -323,6 +401,9 @@ function setupSettingsModal() {
     $("#cfgBaseUrl").value = s.baseUrl;
     $("#cfgModel").value = s.model;
     $("#cfgGroupId").value = s.groupId;
+    const p = getProfile();
+    $("#cfgAge").value = Number.isFinite(p.age) ? p.age : "";
+    $("#cfgSex").value = p.sex || "";
     $("#cfgTestResult").classList.remove("show", "ok", "fail");
     // Render data health inline if data has been loaded
     const dh = $("#dataHealthInline");
@@ -348,8 +429,13 @@ function setupSettingsModal() {
       model: $("#cfgModel").value,
       groupId: $("#cfgGroupId").value,
     });
+    setProfile({
+      age: $("#cfgAge").value,
+      sex: $("#cfgSex").value,
+    });
     close();
     refreshAiStatus();
+    renderVitalsBar();    // pick up new age-stratified ranges immediately
   });
 
   $("#cfgClear").addEventListener("click", () => {
