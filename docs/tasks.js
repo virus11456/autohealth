@@ -1808,8 +1808,8 @@ export function renderTask6(frame, container) {
   });
 
   // ---- Render ----
-  let html = `<h2 class="task-title">✅ 任務 6：自製 Readiness Score</h2>`;
-  html += `<p class="task-intro">把 HRV / 靜息心率 / 睡眠分數 / 呼吸頻率 / 手腕體溫的 z-score 整合成 0-100 的每日恢復分數。指導「今天該不該硬操、該不該做重要決策」。</p>`;
+  let html = `<h2 class="task-title">✅ 任務 6：今日身體分數</h2>`;
+  html += `<p class="task-intro">把心跳變化、靜息心率、睡眠分數、呼吸、手腕體溫綜合起來，給今天的身體一個 0-100 分。回答最簡單的問題：「今天可以硬操嗎？可以做重要決定嗎？」</p>`;
 
   // Hero today's score
   html += `<div class="readiness-hero status-${todayClass.cls}">
@@ -1830,50 +1830,52 @@ export function renderTask6(frame, container) {
       `<strong>⚠ 今日只有 ${todayComponentCount} 個組成成分有資料</strong>　（共 5 個：HRV / 靜息心率 / 睡眠分數 / 呼吸頻率 / 手腕體溫）。分數有算出來但只反映目前能讀到的訊號，不是完整 recovery 圖像。建議 Apple Watch 持續配戴 + 確認睡眠排程開啟。`);
   }
 
-  // Today's interpretation paragraph
+  // Today's interpretation: action sentence based on band + dominant driver
+  const actionByBand = {
+    good:  "今天可以硬操、做重要決定都沒問題。",
+    fair:  "正常作息、不要排太重的事。",
+    low:   "今天少操點、提早睡、避免關鍵決策。",
+    alert: "今天強制休息、補水補眠。如果連續好幾天紅燈，要找原因。",
+    empty: "資料不足。",
+  };
   if (driver) {
     const isPushUp = driver.contribution >= 0;
-    const drvSign = isPushUp ? "拉高" : "拉低";
+    const drvSign = isPushUp ? "把分數拉高" : "把分數拉低";
     const drvClass = isPushUp ? "good" : "alert";
     const trendText = !Number.isFinite(trend) ? "" :
-      trend > 2 ? "整體還在改善趨勢中" :
-      trend < -2 ? "整體在惡化趨勢中（建議減量、提早睡）" :
-      "趨勢相對平穩";
+      trend > 2 ? "<br>最近一週整體還在進步中。" :
+      trend < -2 ? "<br>⚠ 最近一週分數一直在下滑，建議減量、提早睡。" :
+      "<br>最近一週分數很平穩。";
     html += callout(drvClass,
-      `<strong>今日狀態解讀</strong>　${todayDate} 分數 ${today.spec.toFixed(0)} / 100（${todayClass.label}）。` +
-      `主要由 <strong>${driver.label}</strong> ${drvSign}（contribution = ${driver.contribution >= 0 ? "+" : ""}${driver.contribution.toFixed(2)}）。${trendText}。`);
+      `<strong>今天最影響分數的：${driver.label}</strong>${drvSign}。` +
+      trendText +
+      `<br>→ ${actionByBand[todayClass.cls] || ""}`);
   }
 
   // 365-day chart + threshold legend
-  html += `<h3>📈 過去 365 天 Readiness 走勢</h3>`;
-  html += `<p class="muted">綠 ≥ 75 = 可硬操、可做重要決策；紅 &lt; 40 = 建議減量、避免關鍵決策。橫虛線是這兩條閾值。</p>`;
+  html += `<h3>📈 過去走勢</h3>`;
+  html += `<p class="muted">綠線（75 分）以上 = 可以硬操、做重要決策。紅線（40 分）以下 = 建議休息、避免關鍵決策。</p>`;
   html += `<div id="t6-chart" class="task-chart"></div>`;
   html += `<p class="muted">在這個分析期間：🟢 綠燈 ${greens.length} 天 (${(greens.length / finiteIdx.length * 100).toFixed(0)}%)　·　🔴 紅燈 ${reds.length} 天 (${(reds.length / finiteIdx.length * 100).toFixed(0)}%)</p>`;
 
-  // Component breakdown today
-  html += `<h3>🧩 今日各組成成分</h3>`;
-  html += `<p class="muted">每個組成的 scaled z-score（理想值靠近 +2，警戒在 -2）和它對今日總分的加權貢獻。</p>`;
+  // Component breakdown — plain language version
+  html += `<h3>🧩 今天分數的拆解</h3>`;
+  html += `<p class="muted">每個項目對今天分數的影響：綠色 = 拉高分數、紅色 = 拉低分數。</p>`;
   const compRows = ["hrv", "rhr", "sleep", "resp", "temp"].map((k) => {
-    const c = today.components[k];
     if (!(k in today.components)) {
-      return [COMPONENT_LABEL[k], `${(READINESS_WEIGHTS.spec[k] * 100).toFixed(0)} %`, "—", "—"];
+      return [COMPONENT_LABEL[k], "—", "<span class='muted'>沒資料，沒納入計算</span>"];
     }
+    const c = today.components[k];
     const contrib = READINESS_WEIGHTS.spec[k] * c;
-    return [
-      COMPONENT_LABEL[k],
-      `${(READINESS_WEIGHTS.spec[k] * 100).toFixed(0)} %`,
-      c.toFixed(2),
-      `<span style="color:${contrib >= 0 ? "var(--good)" : "var(--bad)"}">${contrib >= 0 ? "+" : ""}${contrib.toFixed(2)}</span>`,
-    ];
+    const word = c > 1.2  ? "🟢 比平常好很多" :
+                 c > 0.3  ? "🟢 比平常好" :
+                 c > -0.3 ? "🔵 跟平常差不多" :
+                 c > -1.2 ? "🟡 比平常差" :
+                            "🔴 比平常差很多";
+    const contribText = `<span style="color:${contrib >= 0 ? "var(--good)" : "var(--bad)"}">${contrib >= 0 ? "+" : ""}${contrib.toFixed(2)} 分</span>`;
+    return [COMPONENT_LABEL[k], word, contribText];
   });
-  html += tableHtml(["成分", "權重", "今日 scaled z", "今日加權貢獻"], compRows, { numCols: [1, 2, 3] });
-
-  // Sensitivity table
-  html += `<h3>🎚 權重敏感度（換組權重結果差多少？）</h3>`;
-  html += `<p class="muted">用四組合理的權重各自算今天的分數。如果四個結果差異很大，代表你今天的訊號不一致，分數脆弱；差異小代表訊號一致、結論穩。</p>`;
-  html += tableHtml(
-    ["權重組合", "HRV / RHR / 睡眠 / 呼吸 / 體溫 (%)", "今日分數", "燈號"],
-    sensRows, { numCols: [2] });
+  html += tableHtml(["項目", "今天表現", "對分數的影響"], compRows, { numCols: [2] });
 
   container.innerHTML = html;
 
