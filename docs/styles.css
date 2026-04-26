@@ -51,8 +51,14 @@ main { padding: 24px; max-width: 1400px; margin: 0 auto; }
 .vitals-period { font-size: 0.78rem; }
 .vitals-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(2, 1fr);   /* phone default */
+  gap: 12px;
+}
+@media (min-width: 600px) {
+  .vitals-grid { grid-template-columns: repeat(3, 1fr); }
+}
+@media (min-width: 900px) {
+  .vitals-grid { grid-template-columns: repeat(4, 1fr); }   /* 4 cards × 2 rows on desktop */
 }
 .vital-tile {
   background: var(--panel-2);
