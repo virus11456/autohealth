@@ -1542,6 +1542,185 @@ export function renderTask6(frame, container) {
     }
   }
 }
+// Helper: is this index an "anomaly day" by the brief's definition?
+//   HRV_z < -1 OR resting_hr_z > +1
+function isRecoveryAnomaly(hrvZ, rhrZ, i) {
+  return (Number.isFinite(hrvZ[i]) && hrvZ[i] < -1) ||
+         (Number.isFinite(rhrZ[i]) && rhrZ[i] > 1);
+}
+
 export function renderTask7(frame, container) {
-  container.innerHTML = PENDING_NOTE(7, "🤒 任務 7：生病早警");
+  if (!frame || frame.rows.length < 30) {
+    container.innerHTML = `<h2 class="task-title">🤒 任務 7：生病早警</h2>` +
+      emptyState("資料量太少，至少需要 30 天讓 baseline + z-score 形成。");
+    return;
+  }
+
+  const required = ["respiratory_zscore30", "wrist_temp_delta_c_zscore30",
+                    "hrv_zscore30", "resting_hr_zscore30"];
+  const missing = required.filter((c) => !frame.columns.includes(c) ||
+    !columnValues(frame, c).some(Number.isFinite));
+  if (missing.length) {
+    container.innerHTML = `<h2 class="task-title">🤒 任務 7：生病早警</h2>` +
+      callout("warn", `<strong>⚠ 缺少 z-score：</strong>${missing.join(" / ")}<br>` +
+        `需要 30 天 baseline 才會有 z-score。確認你資料裡有「呼吸頻率」+「睡眠手腕溫差」+「HRV」+「靜息心率」並且累積 ≥ 30 天。`);
+    return;
+  }
+
+  const respZ = columnValues(frame, "respiratory_zscore30");
+  const tempZ = columnValues(frame, "wrist_temp_delta_c_zscore30");
+  const hrvZ = columnValues(frame, "hrv_zscore30");
+  const rhrZ = columnValues(frame, "resting_hr_zscore30");
+
+  // 1. Warning days: respiratory_z > 1 AND wrist_temp_delta_z > 1 同時
+  const warningDays = [];
+  for (let i = 0; i < frame.rows.length; i++) {
+    if (Number.isFinite(respZ[i]) && Number.isFinite(tempZ[i]) &&
+        respZ[i] > 1 && tempZ[i] > 1) {
+      warningDays.push({ idx: i, date: frame.rows[i].date, respZ: respZ[i], tempZ: tempZ[i] });
+    }
+  }
+
+  // 2. Per warning day, scan next 7 days for the longest "anomaly run".
+  //    "Real onset" = run ≥ 3 days (per brief).
+  for (const w of warningDays) {
+    let longest = 0, cur = 0;
+    const horizon = Math.min(frame.rows.length, w.idx + 1 + 7);
+    for (let j = w.idx + 1; j < horizon; j++) {
+      if (isRecoveryAnomaly(hrvZ, rhrZ, j)) {
+        cur++; if (cur > longest) longest = cur;
+      } else cur = 0;
+    }
+    w.postWindow = horizon - (w.idx + 1);    // observed days available
+    w.postRun = longest;
+    w.outcome = w.postWindow < 7 ? "ongoing" :
+                longest >= 3      ? "onset" :
+                longest > 0       ? "partial" : "none";
+  }
+
+  // 3. Onset events: ≥ 5 consecutive anomaly days (per brief)
+  const onsetEvents = [];
+  let runStart = -1;
+  for (let i = 0; i < frame.rows.length; i++) {
+    if (isRecoveryAnomaly(hrvZ, rhrZ, i)) {
+      if (runStart < 0) runStart = i;
+    } else {
+      if (runStart >= 0 && i - runStart >= 5) {
+        onsetEvents.push({ start: runStart, end: i - 1, len: i - runStart });
+      }
+      runStart = -1;
+    }
+  }
+  if (runStart >= 0 && frame.rows.length - runStart >= 5) {
+    onsetEvents.push({ start: runStart, end: frame.rows.length - 1, len: frame.rows.length - runStart });
+  }
+
+  // 4. Sensitivity: of all onset events, what fraction had a warning day in the
+  //    1-3 days before the event started?
+  let warnedEvents = 0;
+  for (const ev of onsetEvents) {
+    const matched = warningDays.find((w) => {
+      const lead = ev.start - w.idx;
+      return lead >= 1 && lead <= 3;
+    });
+    if (matched) { ev.warning = { day: matched.date, lead: ev.start - matched.idx }; warnedEvents++; }
+  }
+  const sensitivity = onsetEvents.length > 0 ? warnedEvents / onsetEvents.length : NaN;
+
+  // Today's row (latest finite z-score for the warning conditions)
+  let todayIdx = -1;
+  for (let i = frame.rows.length - 1; i >= 0; i--) {
+    if (Number.isFinite(respZ[i]) && Number.isFinite(tempZ[i])) { todayIdx = i; break; }
+  }
+  const isTodayWarning = todayIdx >= 0 && respZ[todayIdx] > 1 && tempZ[todayIdx] > 1;
+  const todayCard = isTodayWarning
+    ? { emoji: "🔴", label: "警戒日", cls: "alert" }
+    : { emoji: "🟢", label: "正常", cls: "good" };
+
+  // ---- Render ----
+  let html = `<h2 class="task-title">🤒 任務 7：生病早警</h2>`;
+  html += `<p class="task-intro">Apple Watch 研究顯示「呼吸頻率上升 + 手腕體溫上升」常比體感發病早 1-2 天。這個分頁找出歷史警戒日 + 驗證對你個人的預警命中率。</p>`;
+
+  // Top 3 stat cards
+  html += `<div class="metric-grid">`;
+  html += statCard({
+    label: "今日狀態",
+    value: todayCard.emoji,
+    subtitle: todayIdx >= 0
+      ? `${frame.rows[todayIdx].date}　·　呼吸 z = ${respZ[todayIdx].toFixed(2)}　·　體溫 z = ${tempZ[todayIdx].toFixed(2)}`
+      : "缺資料",
+    status: todayCard,
+    hint: isTodayWarning
+      ? "建議減量、提早休息、補水；2-3 天內再觀察 HRV / RHR"
+      : "兩個早警訊號都在正常範圍",
+  });
+  html += statCard({
+    label: "歷史警戒日",
+    value: warningDays.length.toString(),
+    subtitle: `分析期間 ${frame.rows.length} 天 · 共 ${onsetEvents.length} 次發病事件`,
+    status: warningDays.length === 0
+      ? { emoji: "🟢", label: "無", cls: "good" }
+      : { emoji: "🔵", label: "有紀錄", cls: "fair" },
+    hint: "警戒日 = 呼吸頻率 z > 1 且 手腕體溫 z > 1 同時",
+  });
+  html += statCard({
+    label: "預警敏感度",
+    value: Number.isFinite(sensitivity) ? (sensitivity * 100).toFixed(0) + "%" : "—",
+    subtitle: `${warnedEvents} / ${onsetEvents.length} 次發病事件，警戒日在 1-3 天前先觸發`,
+    status: !Number.isFinite(sensitivity)
+      ? { emoji: "⚪", label: "無事件", cls: "empty" }
+      : sensitivity >= 0.7 ? { emoji: "🟢", label: "可信", cls: "good" }
+      : sensitivity >= 0.4 ? { emoji: "🔵", label: "中等", cls: "fair" }
+      : { emoji: "🟡", label: "偏低", cls: "low" },
+    hint: "對你而言，呼吸 + 體溫雙警對「真的發病」的命中率",
+  });
+  html += `</div>`;
+
+  // Today warning callout (prominent)
+  if (isTodayWarning) {
+    html += callout("alert",
+      `<strong>⚠ 今日（${frame.rows[todayIdx].date}）為警戒日</strong>　呼吸 z = ${respZ[todayIdx].toFixed(2)}σ、手腕體溫 z = ${tempZ[todayIdx].toFixed(2)}σ。建議減少行程、提早睡、補水，明後兩天再觀察 HRV / 靜息心率走勢；如果接下來 3 天 HRV 持續低於基線，大概率正在進入發病期。`);
+  }
+
+  // Warning days history
+  html += `<h3>📋 歷史警戒日 + 後續發病判定</h3>`;
+  html += `<p class="muted">每個警戒日往後看 7 天，找最長的「恢復異常」連續天數（HRV z &lt; -1 或 RHR z &gt; +1）。≥ 3 天 = 真的進展為發病模式。</p>`;
+  if (!warningDays.length) {
+    html += `<p class="muted">分析期間沒有偵測到警戒日。</p>`;
+  } else {
+    const outcomeMap = {
+      onset:   { color: "var(--bad)",  text: (n) => `✗ 進展為發病 (${n} 天連續異常)` },
+      partial: { color: "var(--warn)", text: (n) => `△ 部分異常 (${n} 天，未連續 3)` },
+      none:    { color: "var(--good)", text: () => "✓ 未進展" },
+      ongoing: { color: "var(--info)", text: () => "… 觀察中（後 7 天還沒過完）" },
+    };
+    const rows = warningDays.slice().reverse().slice(0, 30).map((w) => {
+      const o = outcomeMap[w.outcome];
+      return [
+        w.date,
+        w.respZ.toFixed(2) + "σ",
+        w.tempZ.toFixed(2) + "σ",
+        `<span style="color:${o.color}">${o.text(w.postRun)}</span>`,
+      ];
+    });
+    html += tableHtml(["日期", "呼吸 z", "體溫 z", "後 7 天判定"], rows, { numCols: [1, 2] });
+    if (warningDays.length > 30) html += `<p class="muted">（顯示最近 30 筆，共 ${warningDays.length} 筆）</p>`;
+  }
+
+  // Onset events history (with predictive matching)
+  html += `<h3>📅 歷史發病事件（≥ 5 天恢復異常）</h3>`;
+  if (!onsetEvents.length) {
+    html += `<p class="muted">分析期間沒有偵測到 ≥ 5 天連續恢復異常的事件。</p>`;
+  } else {
+    const rows = onsetEvents.slice().reverse().map((ev) => [
+      `${frame.rows[ev.start].date} → ${frame.rows[ev.end].date}`,
+      `${ev.len} 天`,
+      ev.warning
+        ? `<span style="color:var(--good)">✓ ${ev.warning.day} 提前 ${ev.warning.lead} 天</span>`
+        : `<span style="color:var(--bad)">✗ 沒有 1-3 天前的警戒</span>`,
+    ]);
+    html += tableHtml(["事件期間", "持續", "警戒日預測"], rows, { numCols: [1] });
+  }
+
+  container.innerHTML = html;
 }
