@@ -163,6 +163,79 @@ const VITALS_ITEMS = [
   { key: "daylight",    label: "平均日照",     unit: "分鐘",       digits: 0 },
 ];
 
+// Reference ranges for the persistent vitals bar — generic adult population.
+// `normal` = healthy range, `safe` = anything outside is medically concerning.
+// `note` is the source of truth caveat shown in the range text.
+const VITAL_REFERENCES = {
+  hr: {
+    normal: [65, 95], safe: [55, 110],
+    explain: {
+      low:  "可能是運動員體質；如有頭暈 / 疲倦要就醫",
+      high: "壓力大 / 缺水 / 咖啡因過多 / 發炎前期；長期 > 100 建議檢查",
+    },
+  },
+  resting_hr: {
+    normal: [55, 80], safe: [45, 100],
+    explain: {
+      low:  "心肺體能很好（運動員常見）；< 45 + 頭暈要就醫",
+      high: "睡眠不足 / 壓力 / 過度訓練 / 早期感染；持續 > 80 要注意",
+    },
+  },
+  spo2: {
+    normal: [95, 100], safe: [92, 100],
+    explain: {
+      low:  "持續 < 95 要注意，< 92 應就醫；常見原因：肺功能、睡眠呼吸中止",
+      high: "—",
+    },
+  },
+  hrv: {
+    normal: [25, 80], safe: [15, 150],
+    explain: {
+      low:  "自律神經緊繃，常見於壓力 / 過勞 / 老化 / 睡眠不足",
+      high: "恢復力很好（少見偏高，通常是好事）",
+    },
+    note: "HRV 個別差異大，跟自己過去比 > 跟標準比",
+  },
+  sleep_hours: {
+    normal: [7, 9], safe: [5.5, 10],
+    explain: {
+      low:  "長期 < 6 小時 → 心血管 / 認知 / 免疫力都會受影響",
+      high: "持續 > 9 小時還累 = 可能潛在疾病；偶爾補眠沒關係",
+    },
+  },
+  vo2max: {
+    normal: [28, 55], safe: [18, 70],
+    explain: {
+      low:  "心肺體能偏低，規律有氧運動可改善（每週 150 分鐘中強度）",
+      high: "心肺體能很好",
+    },
+    note: "VO2 Max 跟年齡 / 性別關係大；< 30 歲普遍 > 40，60 歲普遍 > 30 就 OK",
+  },
+  respiratory: {
+    normal: [12, 20], safe: [10, 24],
+    explain: {
+      low:  "持續 < 12 可能是心肺 / 神經系統問題",
+      high: "可能是發燒 / 發炎 / 焦慮 / 心肺問題；持續 > 20 建議就醫",
+    },
+  },
+  daylight: {
+    normal: [30, 120], safe: [10, 360],
+    explain: {
+      low:  "日照不足 → 維生素 D 不足、晝夜節律失調、白天精神差",
+      high: "曬太多注意防曬與曬傷風險",
+    },
+  },
+};
+
+function vitalStatus(value, ref) {
+  if (!Number.isFinite(value) || !ref) return { cls: "empty", text: "—", direction: null };
+  if (value < ref.safe[0])   return { cls: "alert", text: "⚠ 太低", direction: "low" };
+  if (value > ref.safe[1])   return { cls: "alert", text: "⚠ 太高", direction: "high" };
+  if (value < ref.normal[0]) return { cls: "low",   text: "↓ 偏低", direction: "low" };
+  if (value > ref.normal[1]) return { cls: "low",   text: "↑ 偏高", direction: "high" };
+  return { cls: "good", text: "✓ 正常", direction: null };
+}
+
 function renderVitalsBar() {
   const grid = $("#vitalsGrid");
   const periodEl = $("#vitalsPeriod");
@@ -170,11 +243,9 @@ function renderVitalsBar() {
 
   const rows = state.filtered.rows;
   if (periodEl) {
-    if (rows.length) {
-      periodEl.textContent = `${rows[0].date} → ${rows[rows.length - 1].date}　·　${rows.length} 天`;
-    } else {
-      periodEl.textContent = "區間無資料";
-    }
+    periodEl.textContent = rows.length
+      ? `${rows[0].date} → ${rows[rows.length - 1].date}　·　${rows.length} 天`
+      : "區間無資料";
   }
 
   let html = "";
@@ -187,10 +258,24 @@ function renderVitalsBar() {
     const avg = n > 0 ? sum / n : NaN;
     const isEmpty = !Number.isFinite(avg);
     const display = isEmpty ? "—" : avg.toFixed(it.digits);
+    const ref = VITAL_REFERENCES[it.key];
+    const status = vitalStatus(avg, ref);
+    const refRange = ref
+      ? `一般成人 ${ref.normal[0]}–${ref.normal[1]} ${it.unit}`
+      : "";
+    const hint = (ref && status.direction) ? ref.explain[status.direction] : "";
+    const note = ref?.note;
+
     html += `
-      <div class="vital-tile${isEmpty ? " empty" : ""}" data-key="${it.key}">
-        <div class="vital-label">${it.label}</div>
+      <div class="vital-tile vital-${status.cls}${isEmpty ? " empty" : ""}" data-key="${it.key}">
+        <div class="vital-header">
+          <span class="vital-label">${it.label}</span>
+          <span class="vital-status">${status.text}</span>
+        </div>
         <div class="vital-value">${display}${isEmpty ? "" : `<span class="vital-unit">${it.unit}</span>`}</div>
+        ${refRange ? `<div class="vital-ref muted">${refRange}</div>` : ""}
+        ${hint ? `<div class="vital-hint">${hint}</div>` : ""}
+        ${note && !isEmpty ? `<div class="vital-note muted">ℹ ${note}</div>` : ""}
       </div>`;
   }
   grid.innerHTML = html;

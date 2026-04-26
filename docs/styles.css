@@ -69,10 +69,23 @@ main { padding: 24px; max-width: 1400px; margin: 0 auto; }
   opacity: 0.55;
 }
 .vital-tile:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+.vital-tile.vital-low   { border-color: color-mix(in srgb, var(--warn) 30%, var(--border)); }
+.vital-tile.vital-alert { border-color: color-mix(in srgb, var(--bad)  40%, var(--border)); }
+.vital-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  padding-left: 6px; gap: 6px;
+}
 .vital-label {
   color: var(--muted); font-size: 0.76rem; line-height: 1.2;
-  padding-left: 6px;
 }
+.vital-status {
+  font-size: 0.68rem; font-weight: 600; padding: 1px 6px;
+  border-radius: 4px; white-space: nowrap;
+}
+.vital-tile.vital-good   .vital-status { color: var(--good); background: rgba(52,195,143,0.12); }
+.vital-tile.vital-low    .vital-status { color: var(--warn); background: rgba(240,160,32,0.12); }
+.vital-tile.vital-alert  .vital-status { color: var(--bad);  background: rgba(239,68,68,0.12); }
+.vital-tile.vital-empty  .vital-status { color: var(--muted); }
 .vital-value {
   font-size: 1.5rem; font-weight: 600; margin-top: 4px;
   font-variant-numeric: tabular-nums; line-height: 1.1;
@@ -80,6 +93,19 @@ main { padding: 24px; max-width: 1400px; margin: 0 auto; }
 }
 .vital-unit {
   font-size: 0.62em; color: var(--muted); font-weight: 400; margin-left: 3px;
+}
+.vital-ref {
+  font-size: 0.7rem; padding-left: 6px; margin-top: 4px;
+}
+.vital-hint {
+  font-size: 0.72rem; padding-left: 6px; margin-top: 5px;
+  line-height: 1.45;
+}
+.vital-tile.vital-low   .vital-hint { color: var(--warn); }
+.vital-tile.vital-alert .vital-hint { color: var(--bad);  }
+.vital-note {
+  font-size: 0.68rem; padding-left: 6px; margin-top: 4px;
+  font-style: italic; opacity: 0.75;
 }
 .vital-tile.empty .vital-value { color: var(--muted); font-weight: 400; }
 .vital-tile.empty::before { background: var(--muted); opacity: 0.3; }
