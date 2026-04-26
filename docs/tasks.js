@@ -1072,7 +1072,251 @@ export function renderTask4(frame, container) {
   drawMetricChart("t4-eff", dates, eff, effSm, "#4f8cff");
 }
 export function renderTask5(frame, container) {
-  container.innerHTML = PENDING_NOTE(5, "🌅 任務 5：環境與生理節律");
+  if (!frame || frame.rows.length < 14) {
+    container.innerHTML = `<h2 class="task-title">🌅 任務 5：環境與生理節律</h2>` +
+      emptyState("資料量太少。");
+    return;
+  }
+  const required = ["daylight", "sleep_score", "bedtime_hour", "hrv"];
+  const missing = required.filter((c) => !frame.columns.includes(c) ||
+    !columnValues(frame, c).some(Number.isFinite));
+  if (missing.length) {
+    container.innerHTML = `<h2 class="task-title">🌅 任務 5：環境與生理節律</h2>` +
+      callout("warn", `<strong>⚠ 缺少指標：</strong>${missing.map(labelOf).join(" / ")}<br>` +
+        `日照需要 watchOS 10+；上床時間需要設定睡眠排程。`);
+    return;
+  }
+
+  const dates = frame.rows.map((r) => r.date);
+  const daylight = columnValues(frame, "daylight");
+  const sleepScore = columnValues(frame, "sleep_score");
+  const bedtime = columnValues(frame, "bedtime_hour");
+  const hrv = columnValues(frame, "hrv");
+
+  // Derive is_weekend from the row date — Apple Health export doesn't carry this
+  const isWeekend = frame.rows.map((r) => {
+    const day = new Date(r.date + "T00:00:00").getDay();
+    return day === 0 || day === 6;
+  });
+
+  const daylightSm = rollingMean(daylight, 30);
+  const sleepScoreSm = rollingMean(sleepScore, 30);
+  const bedtimeSm = rollingMean(bedtime, 30);
+
+  // Monthly std of bedtime_hour — circadian stability proxy
+  const monthMap = groupByMonth(frame.rows);
+  const monthlyStd = [];
+  for (const [monthKey, rows] of monthMap) {
+    const beds = rows.map((r) => r.bedtime_hour).filter(Number.isFinite);
+    if (beds.length < 5) continue;
+    monthlyStd.push({ month: monthKey, std: stdFinite(beds), n: beds.length });
+  }
+  monthlyStd.sort((a, b) => a.month.localeCompare(b.month));
+  const latestStd = monthlyStd.length ? monthlyStd[monthlyStd.length - 1] : null;
+  const overallBedStd = stdFinite(bedtime);
+
+  // Daylight bins → that night's sleep_score (the brief's binning thresholds)
+  const daylightBins = [
+    { label: "<30 分", lo: -Infinity, hi: 30, color: "#ef4444", scores: [] },
+    { label: "30-60 分", lo: 30, hi: 60, color: "#f0a020", scores: [] },
+    { label: "60-120 分", lo: 60, hi: 120, color: "#4f8cff", scores: [] },
+    { label: ">120 分", lo: 120, hi: Infinity, color: "#34c38f", scores: [] },
+  ];
+  for (let i = 0; i < frame.rows.length; i++) {
+    const dl = daylight[i], sc = sleepScore[i];
+    if (!Number.isFinite(dl) || !Number.isFinite(sc)) continue;
+    for (const b of daylightBins) {
+      if (dl >= b.lo && dl < b.hi) { b.scores.push(sc); break; }
+    }
+  }
+
+  // Daylight deficit: find ≥3-day runs of daylight < 30, then collect HRV
+  // values in the 7 days after each run ends. Compare to all other days.
+  const postDeficit = new Set();
+  let runStart = -1;
+  for (let i = 0; i < frame.rows.length; i++) {
+    if (Number.isFinite(daylight[i]) && daylight[i] < 30) {
+      if (runStart < 0) runStart = i;
+    } else {
+      if (runStart >= 0 && i - runStart >= 3) {
+        for (let j = i; j < Math.min(frame.rows.length, i + 7); j++) postDeficit.add(j);
+      }
+      runStart = -1;
+    }
+  }
+  const deficitHrv = [], otherHrv = [];
+  for (let i = 0; i < frame.rows.length; i++) {
+    if (!Number.isFinite(hrv[i])) continue;
+    (postDeficit.has(i) ? deficitHrv : otherHrv).push(hrv[i]);
+  }
+  const deficitT = (deficitHrv.length >= 5 && otherHrv.length >= 5)
+    ? welchTTest(deficitHrv, otherHrv) : null;
+
+  // Weekend vs weekday t-test across many metrics
+  const compareKeys = [
+    { key: "hrv",          label: "HRV",         higherBetter: true,  unit: " ms" },
+    { key: "resting_hr",   label: "靜息心率",   higherBetter: false, unit: " bpm" },
+    { key: "sleep_score",  label: "睡眠分數",   higherBetter: true,  unit: " /100" },
+    { key: "sleep_hours",  label: "睡眠時數",   higherBetter: true,  unit: " h" },
+    { key: "steps",        label: "步數",       higherBetter: true,  unit: "" },
+    { key: "bedtime_hour", label: "上床時間",   higherBetter: false, unit: " h" },
+    { key: "daylight",     label: "日照",       higherBetter: true,  unit: " 分" },
+  ].filter((m) => frame.columns.includes(m.key));
+  const wkRows = compareKeys.map((m) => {
+    const arr = columnValues(frame, m.key);
+    const wknd = [], wkdy = [];
+    for (let i = 0; i < frame.rows.length; i++) {
+      if (!Number.isFinite(arr[i])) continue;
+      (isWeekend[i] ? wknd : wkdy).push(arr[i]);
+    }
+    return { ...m,
+      wkdyMean: wkdy.length ? meanFinite(wkdy) : NaN,
+      wkndMean: wknd.length ? meanFinite(wknd) : NaN,
+      t: (wknd.length >= 5 && wkdy.length >= 5) ? welchTTest(wknd, wkdy)
+                                                : { t: NaN, p: NaN, na: wknd.length, nb: wkdy.length },
+    };
+  });
+
+  // ---- Render ----
+  let html = `<h2 class="task-title">🌅 任務 5：環境與生理節律</h2>`;
+  html += `<p class="task-intro">日照是調節晝夜節律最強的因子；上床時間穩定性會反映在 HRV 與深睡比上。常出國（時區跳動）這個分頁特別有用。</p>`;
+
+  // Top cards
+  html += `<h3>📊 環境 + 節律核心指標</h3>`;
+  html += `<div class="metric-grid">`;
+  html += metricCard({
+    chartId: "t5-daylight", label: "日照時間", unit: " 分",
+    dates, raw: daylight, smooth: daylightSm, higherIsBetter: true,
+    hint: "&lt; 30 分連 ≥ 3 天 → 容易影響晝夜節律 + 深睡比",
+  });
+  html += metricCard({
+    chartId: "t5-bedtime", label: "上床時間", unit: " h",
+    dates, raw: bedtime, smooth: bedtimeSm, higherIsBetter: false,
+    hint: "23 = 23:00, 25 = 隔日 01:00。越早越好",
+  });
+  html += metricCard({
+    chartId: "t5-sleep", label: "睡眠分數", unit: " /100",
+    dates, raw: sleepScore, smooth: sleepScoreSm, higherIsBetter: true,
+    hint: "日照充足通常會推升深睡比 → 睡眠分數提升",
+  });
+  // Stability stat card (no sparkline; uses statCard)
+  const stabStatus = latestStd ? (
+    latestStd.std < 0.5 ? { emoji: "🟢", label: "穩定", cls: "good" } :
+    latestStd.std < 1.0 ? { emoji: "🔵", label: "尚可", cls: "fair" } :
+    latestStd.std < 1.5 ? { emoji: "🟡", label: "略不穩", cls: "low" } :
+    { emoji: "🔴", label: "作息混亂", cls: "alert" }
+  ) : { emoji: "⚪", label: "資料不足", cls: "empty" };
+  html += statCard({
+    label: "作息穩定度（最近月）",
+    value: latestStd ? `±${latestStd.std.toFixed(2)} h` : "—",
+    subtitle: latestStd
+      ? `${latestStd.month}　·　n = ${latestStd.n}　·　整體 ±${Number.isFinite(overallBedStd) ? overallBedStd.toFixed(2) : "—"} h`
+      : `整體 ±${Number.isFinite(overallBedStd) ? overallBedStd.toFixed(2) : "—"} h`,
+    status: stabStatus,
+    hint: "上床時間的月度標準差 — 越小代表你睡眠時點越固定",
+  });
+  html += `</div>`;
+
+  // Daylight bin
+  html += `<h3>☀ 日照時間 → 當晚睡眠分數分佈</h3>`;
+  html += `<p class="muted">把每日日照時間分 4 箱，看當晚睡眠分數的分佈。理想：日照越多，睡眠分數中位數越高。</p>`;
+  html += tableHtml(["日照區間", "天數", "睡眠分數平均"],
+    daylightBins.map((b) => [b.label, b.scores.length,
+      b.scores.length ? meanFinite(b.scores).toFixed(1) : "—"]),
+    { numCols: [1, 2] });
+  html += `<div id="t5-bin" class="task-chart"></div>`;
+
+  // Monthly bedtime std
+  html += `<h3>📈 月度作息穩定度</h3>`;
+  if (monthlyStd.length < 2) {
+    html += `<p class="muted">資料還不到 2 個月，無法畫月度趨勢。</p>`;
+  } else {
+    html += `<p class="muted">每月上床時間的標準差。&lt; 0.5 h = 作息相當固定；&gt; 1.5 h = 上床時間天天不同。</p>`;
+    html += `<div id="t5-stab" class="task-chart"></div>`;
+  }
+
+  // Daylight deficit t-test
+  html += `<h3>🌧 日照不足連 3 天後 HRV 影響</h3>`;
+  if (!deficitT) {
+    html += `<p class="muted">資料中沒有「日照 &lt; 30 分」連續 3 天以上的時段，或樣本太少無法做 t-test。</p>`;
+  } else {
+    const dropMs = deficitT.ma - deficitT.mb;
+    const isSig = Number.isFinite(deficitT.p) && deficitT.p < 0.05;
+    const sigClass = isSig ? (dropMs < 0 ? "alert" : "info") : "info";
+    html += callout(sigClass,
+      `<strong>${isSig ? (dropMs < 0 ? "⚠ HRV 顯著下降" : "ℹ 有顯著差異（往上）") : "ℹ 沒有顯著影響"}</strong><br>` +
+      `日照不足後 7 天 HRV 平均：<strong>${deficitT.ma.toFixed(1)} ms</strong> (n = ${deficitT.na})<br>` +
+      `其他時段 HRV 平均：<strong>${deficitT.mb.toFixed(1)} ms</strong> (n = ${deficitT.nb})<br>` +
+      `差異 ${(dropMs >= 0 ? "+" : "") + dropMs.toFixed(1)} ms　·　Welch t = ${deficitT.t.toFixed(2)}, p = ${Number.isFinite(deficitT.p) ? deficitT.p.toFixed(3) : "—"}${isSig ? " *" : ""}`);
+  }
+
+  // Weekend vs weekday
+  html += `<h3>📅 假日 vs 平日全指標差異</h3>`;
+  html += `<p class="muted">看「週末恢復效應」是否真的存在。Welch t-test，p &lt; 0.05 = 有顯著差異（標 *）。</p>`;
+  const wkTableRows = wkRows.map((r) => {
+    const diff = r.wkndMean - r.wkdyMean;
+    const goodSign = Number.isFinite(diff) && (r.higherBetter ? diff > 0 : diff < 0);
+    const sigStar = Number.isFinite(r.t.p) && r.t.p < 0.05 ? " *" : "";
+    const dirText = Number.isFinite(diff) ? (diff >= 0 ? "+" : "") + diff.toFixed(2) + r.unit : "—";
+    return [
+      r.label,
+      Number.isFinite(r.wkdyMean) ? r.wkdyMean.toFixed(2) + r.unit : "—",
+      Number.isFinite(r.wkndMean) ? r.wkndMean.toFixed(2) + r.unit : "—",
+      `<span style="color:${goodSign ? 'var(--good)' : 'var(--bad)'}">${dirText}</span>`,
+      Number.isFinite(r.t.p) ? r.t.p.toFixed(3) + sigStar : "—",
+    ];
+  });
+  html += tableHtml(["指標", "平日均", "週末均", "週末 vs 平日 (差)", "p 值"], wkTableRows,
+    { numCols: [1, 2, 3, 4] });
+
+  container.innerHTML = html;
+
+  // Mini metric charts
+  drawMetricChart("t5-daylight", dates, daylight, daylightSm, "#f0a020");
+  drawMetricChart("t5-bedtime", dates, bedtime, bedtimeSm, "#a78bfa");
+  drawMetricChart("t5-sleep", dates, sleepScore, sleepScoreSm, "#34c38f");
+
+  if (typeof Plotly !== "undefined") {
+    const binDiv = document.getElementById("t5-bin");
+    if (binDiv) {
+      const traces = daylightBins.filter((b) => b.scores.length).map((b) => ({
+        type: "box", y: b.scores, name: b.label,
+        marker: { color: b.color }, line: { color: b.color },
+        boxpoints: "outliers", boxmean: true,
+      }));
+      Plotly.newPlot(binDiv, traces, {
+        paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+        font: { color: "#e6e9ef", family: "inherit", size: 11 },
+        margin: { l: 50, r: 20, t: 20, b: 40 },
+        xaxis: { title: { text: "日照區間", font: { size: 11 } }, gridcolor: "rgba(127,127,127,0.08)" },
+        yaxis: { title: { text: "當晚睡眠分數", font: { size: 11 } }, gridcolor: "rgba(127,127,127,0.08)" },
+        height: 280, showlegend: false,
+      }, { displaylogo: false, responsive: true });
+    }
+    if (monthlyStd.length >= 2) {
+      const stabDiv = document.getElementById("t5-stab");
+      if (stabDiv) {
+        Plotly.newPlot(stabDiv, [{
+          x: monthlyStd.map((m) => m.month),
+          y: monthlyStd.map((m) => m.std),
+          type: "bar",
+          marker: { color: monthlyStd.map((m) =>
+            m.std < 0.5 ? "#34c38f" :
+            m.std < 1.0 ? "#4f8cff" :
+            m.std < 1.5 ? "#f0a020" : "#ef4444"),
+          },
+        }], {
+          paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+          font: { color: "#e6e9ef", family: "inherit", size: 11 },
+          margin: { l: 50, r: 20, t: 20, b: 40 },
+          xaxis: { gridcolor: "rgba(127,127,127,0.08)" },
+          yaxis: { title: { text: "上床時間 std (h)", font: { size: 11 } },
+                   gridcolor: "rgba(127,127,127,0.08)" },
+          height: 240, showlegend: false,
+        }, { displaylogo: false, responsive: true });
+      }
+    }
+  }
 }
 export function renderTask6(frame, container) {
   container.innerHTML = PENDING_NOTE(6, "✅ 任務 6：Readiness Score");
