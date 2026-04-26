@@ -441,10 +441,10 @@ function metricCard({ chartId, label, unit, dates, raw, smooth, frameRows, basel
   const fmtV = (v) => !Number.isFinite(v) ? "—" :
     Math.abs(v) >= 100 ? v.toFixed(0) :
     Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(2);
-  const baselineLabel = mode === "rolling30" ? "30 天基線" :
-                        mode === "overall"   ? "整體平均（資料稀疏，無 30 天 baseline）" :
+  const baselineLabel = mode === "rolling30" ? "比平常" :
+                        mode === "overall"   ? "比整體平均" :
                                                "資料不足";
-  const zText = Number.isFinite(z) ? `（${z >= 0 ? "+" : ""}${z.toFixed(2)}σ）` : "";
+  const phrase = deltaPhrase(z, higherIsBetter);
   return `
     <div class="metric-card status-${status.cls}">
       <div class="metric-head">
@@ -458,25 +458,41 @@ function metricCard({ chartId, label, unit, dates, raw, smooth, frameRows, basel
         <span class="metric-delta ${deltaClass}">
           ${Number.isFinite(delta) ? (delta >= 0 ? "↑ +" : "↓ ") + fmtV(Math.abs(delta)) + unit : ""}
         </span>
-        <span class="muted">vs ${baselineLabel} ${fmtV(baseline)}${unit} ${zText}</span>
+        <span class="muted">${baselineLabel} ${fmtV(baseline)}${unit}　·　<span style="color:var(--${phrase.cls})">${phrase.word}</span></span>
       </div>
       <div id="${chartId}" class="metric-chart"></div>
       ${hint ? `<div class="metric-hint muted">${hint}</div>` : ""}
     </div>`;
 }
 
-// Render a sparkline-style line chart into the given div.
+// Render a line chart with raw values connected, 30-day rolling mean
+// overlay, and a dashed horizontal "your average" reference line so users
+// can directly read "above or below personal baseline" at a glance.
 function drawMetricChart(divId, dates, raw, smooth, color, opts = {}) {
   const div = document.getElementById(divId);
   if (!div || typeof Plotly === "undefined") return;
+  const baseline = meanFinite(raw);
   const traces = [
-    { x: dates, y: raw, mode: "markers", type: "scatter",
-      marker: { size: 2.5, opacity: 0.35, color }, name: "原始", showlegend: false,
+    { x: dates, y: raw, mode: "lines+markers", type: "scatter",
+      line: { width: 1.4, color, shape: "linear" },
+      marker: { size: 3, color },
+      connectgaps: false,
+      name: "每日值", showlegend: false,
       hovertemplate: `%{x}<br>%{y:.2f}<extra></extra>` },
     { x: dates, y: smooth, mode: "lines", type: "scatter",
-      line: { width: 2, color }, name: "30 天均", showlegend: false,
+      line: { width: 2.5, color, dash: "solid" },
+      opacity: 0.55,
+      name: "30 天均", showlegend: false,
       hovertemplate: `%{x}<br>30d 均: %{y:.2f}<extra></extra>` },
   ];
+  const shapes = [];
+  if (Number.isFinite(baseline)) {
+    shapes.push({
+      type: "line", xref: "paper", x0: 0, x1: 1,
+      y0: baseline, y1: baseline,
+      line: { color: "rgba(255,255,255,0.35)", width: 1, dash: "dash" },
+    });
+  }
   Plotly.newPlot(div, traces, {
     paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
     font: { color: "#8b94a7", family: "inherit", size: 10 },
@@ -486,7 +502,69 @@ function drawMetricChart(divId, dates, raw, smooth, color, opts = {}) {
     height: opts.height || 140,
     hovermode: "x unified",
     showlegend: false,
+    shapes,
   }, { displaylogo: false, responsive: true, displayModeBar: false });
+}
+
+// 3-panel combined chart for the Readiness triangle. Stacks HRV / RHR /
+// walking_HR with a shared x-axis so the user can scan vertically and tell
+// whether all three are moving in the "good" direction simultaneously
+// (= recovering / fitter) or all in the "bad" direction (= fatigue / sick).
+function drawTriangleCombined(divId, dates, hrv, rhr, walking) {
+  const div = document.getElementById(divId);
+  if (!div || typeof Plotly === "undefined") return;
+  const hrvBase = meanFinite(hrv);
+  const rhrBase = meanFinite(rhr);
+  const walkBase = meanFinite(walking);
+  const hrvSm = rollingMean(hrv, 30);
+  const rhrSm = rollingMean(rhr, 30);
+  const walkSm = rollingMean(walking, 30);
+
+  const traces = [
+    { x: dates, y: hrv, mode: "lines+markers", type: "scatter",
+      line: { width: 1.4, color: "#34c38f" }, marker: { size: 3, color: "#34c38f" },
+      name: "心跳變化 HRV", connectgaps: false, xaxis: "x", yaxis: "y",
+      hovertemplate: "%{x}<br>HRV %{y:.1f} ms<extra></extra>" },
+    { x: dates, y: hrvSm, mode: "lines", type: "scatter",
+      line: { width: 2.5, color: "#34c38f" }, opacity: 0.55, showlegend: false,
+      xaxis: "x", yaxis: "y", hoverinfo: "skip" },
+    { x: dates, y: rhr, mode: "lines+markers", type: "scatter",
+      line: { width: 1.4, color: "#ef4444" }, marker: { size: 3, color: "#ef4444" },
+      name: "靜息心率", connectgaps: false, xaxis: "x", yaxis: "y2",
+      hovertemplate: "%{x}<br>RHR %{y:.0f} bpm<extra></extra>" },
+    { x: dates, y: rhrSm, mode: "lines", type: "scatter",
+      line: { width: 2.5, color: "#ef4444" }, opacity: 0.55, showlegend: false,
+      xaxis: "x", yaxis: "y2", hoverinfo: "skip" },
+    { x: dates, y: walking, mode: "lines+markers", type: "scatter",
+      line: { width: 1.4, color: "#f0a020" }, marker: { size: 3, color: "#f0a020" },
+      name: "走路心跳", connectgaps: false, xaxis: "x", yaxis: "y3",
+      hovertemplate: "%{x}<br>走路 HR %{y:.0f} bpm<extra></extra>" },
+    { x: dates, y: walkSm, mode: "lines", type: "scatter",
+      line: { width: 2.5, color: "#f0a020" }, opacity: 0.55, showlegend: false,
+      xaxis: "x", yaxis: "y3", hoverinfo: "skip" },
+  ];
+  const dashLine = (yref, val) => Number.isFinite(val) ? {
+    type: "line", xref: "paper", x0: 0, x1: 1, y0: val, y1: val, yref,
+    line: { color: "rgba(255,255,255,0.30)", width: 1, dash: "dash" },
+  } : null;
+  Plotly.newPlot(div, traces, {
+    paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+    font: { color: "#e6e9ef", family: "inherit", size: 11 },
+    margin: { l: 60, r: 20, t: 30, b: 40 },
+    xaxis: { domain: [0, 1], anchor: "y3",
+             gridcolor: "rgba(127,127,127,0.08)", tickfont: { size: 10 } },
+    yaxis:  { domain: [0.70, 1.00], gridcolor: "rgba(127,127,127,0.08)",
+              title: { text: "HRV (ms)　好↑", font: { size: 10 } } },
+    yaxis2: { domain: [0.37, 0.65], gridcolor: "rgba(127,127,127,0.08)",
+              title: { text: "靜息心跳 (bpm)　好↓", font: { size: 10 } } },
+    yaxis3: { domain: [0.00, 0.28], gridcolor: "rgba(127,127,127,0.08)",
+              title: { text: "走路心跳 (bpm)　好↓", font: { size: 10 } } },
+    shapes: [dashLine("y", hrvBase), dashLine("y2", rhrBase), dashLine("y3", walkBase)].filter(Boolean),
+    height: 540,
+    hovermode: "x unified",
+    showlegend: true,
+    legend: { orientation: "h", y: 1.05, x: 0.5, xanchor: "center" },
+  }, { displaylogo: false, responsive: true });
 }
 
 function corrCellColor(r) {
@@ -618,32 +696,89 @@ export function renderTask2(frame, container) {
     rem:   meanFinite(superDays.map((d) => d.remMin)),
   } : null;
 
+  // ---- Today's verdict (computed from latest day where these metrics exist) ----
+  const todayIdx = Math.max(lastFiniteIdx(hrv), lastFiniteIdx(rhr), lastFiniteIdx(walking));
+  const tRow = todayIdx >= 0 ? frame.rows[todayIdx] : null;
+  const tHrvZ = tRow?.hrv_zscore30;
+  const tRhrZ = tRow?.resting_hr_zscore30;
+  const tWalkZ = tRow?.walking_hr_zscore30;
+  let goodDirs = 0, badDirs = 0;
+  if (Number.isFinite(tHrvZ))  { if (tHrvZ > 0.5)  goodDirs++; else if (tHrvZ < -0.5) badDirs++; }
+  if (Number.isFinite(tRhrZ))  { if (tRhrZ < -0.5) goodDirs++; else if (tRhrZ > 0.5)  badDirs++; }
+  if (Number.isFinite(tWalkZ)) { if (tWalkZ < -0.5) goodDirs++; else if (tWalkZ > 0.5) badDirs++; }
+  const haveAny = Number.isFinite(tHrvZ) || Number.isFinite(tRhrZ) || Number.isFinite(tWalkZ);
+
+  let verdict;
+  if (!haveAny) {
+    verdict = verdictPanel({
+      cls: "empty", emoji: "⚪",
+      headline: "資料還不夠",
+      detail: "需要至少幾週的記錄才看得出趨勢。",
+    });
+  } else if (goodDirs >= 2 && badDirs === 0) {
+    verdict = verdictPanel({
+      cls: "good", emoji: "🟢",
+      headline: "今天身體狀態不錯",
+      detail: "心跳、放鬆度、運動心跳都比平常好——身體在累積進步。",
+      action: "今天可以正常活動 / 訓練 / 工作。",
+    });
+  } else if (badDirs >= 2 && goodDirs === 0) {
+    verdict = verdictPanel({
+      cls: "alert", emoji: "🔴",
+      headline: "身體比平常累，要注意",
+      detail: "好幾個訊號都比平常差，可能是太累、睡不夠、或是快感冒。這種訊號通常比你自己感覺到不舒服早 1-2 天。",
+      action: "今天早點睡 + 多喝水 + 減少行程；明後天再看一次。",
+    });
+  } else if (badDirs >= 1) {
+    verdict = verdictPanel({
+      cls: "low", emoji: "🟡",
+      headline: "有些訊號跟平常不一樣",
+      detail: "一兩個指標偏離平常，但還沒到警戒。",
+      action: "維持作息，明天再觀察看看。",
+    });
+  } else {
+    verdict = verdictPanel({
+      cls: "fair", emoji: "🔵",
+      headline: "跟平常差不多",
+      detail: "心跳、放鬆度都接近你的平常水準。",
+      action: "繼續維持就好。",
+    });
+  }
+
   // ---- Render ----
-  let html = `<h2 class="task-title">🔋 任務 2：核心 Readiness 三角</h2>`;
-  html += `<p class="task-intro">HRV ↑ + 靜息心率 ↓ + 同強度步行心率 ↓ = 身體狀態進步；三者反向 = 累積疲勞或感冒前兆（通常比體感早 1-2 天）。</p>`;
+  let html = `<h2 class="task-title">🔋 任務 2：身體狀態三角</h2>`;
+  html += `<p class="task-intro">看你身體的三個訊號：心跳變化（HRV）、躺著時的心跳（靜息心率）、走路時的心跳。三個一起看比單看一個準。</p>`;
+  html += verdict;
 
   // Card row: today's value + delta vs 30-day baseline + mini chart, per metric.
-  html += `<h3>📊 黃金三角現況</h3>`;
+  html += `<h3>📊 三個訊號現況</h3>`;
   html += `<div class="metric-grid">`;
   html += metricCard({
-    chartId: "t2-chart-hrv", label: "HRV", unit: " ms",
+    chartId: "t2-chart-hrv", label: "心跳變化 (HRV)", unit: " ms",
     dates, raw: hrv, smooth: hrvSm, higherIsBetter: true,
     frameRows: frame.rows, baselineKey: "hrv",
-    hint: "心率變異 ↑ = 自律神經彈性好",
+    hint: "數字越高 = 身體越放鬆、恢復力越好",
   });
   html += metricCard({
     chartId: "t2-chart-rhr", label: "靜息心率", unit: " bpm",
     dates, raw: rhr, smooth: rhrSm, higherIsBetter: false,
     frameRows: frame.rows, baselineKey: "resting_hr",
-    hint: "靜息心率 ↓ = 心肺基底進步",
+    hint: "躺著時的心跳。越低 = 心臟越強壯",
   });
   html += metricCard({
-    chartId: "t2-chart-walking", label: "步行心率", unit: " bpm",
+    chartId: "t2-chart-walking", label: "走路心跳", unit: " bpm",
     dates, raw: walking, smooth: walkingSm, higherIsBetter: false,
     frameRows: frame.rows, baselineKey: "walking_hr",
-    hint: "同強度步行心率 ↓ = 心肺效率提升",
+    hint: "走相同距離的心跳。越低 = 走路越省力",
   });
   html += `</div>`;
+
+  // Combined 3-panel view — same x-axis, three independent y-axes.
+  // Reads vertically: at any date, are all three lines on the "good" side of
+  // their dashed personal-baseline? If yes → recovery. All on "bad" side → fatigue.
+  html += `<h3>🔄 三個訊號疊在一起看</h3>`;
+  html += `<p class="muted" style="margin:0 0 8px 0;">虛線是「你個人的平均」。理想：HRV 在虛線上面、靜息心跳在虛線下面、走路心跳在虛線下面（=三個都在好的方向）。如果三個同時跑到「不好的那邊」，就要小心是不是太累或快感冒。</p>`;
+  html += `<div id="t2-combined" class="task-chart"></div>`;
 
   // Correlation matrix on RAW values (Spearman is rank-based; z-score
   // standardisation is a monotonic transform and produces identical ranks,
@@ -715,7 +850,36 @@ export function renderTask2(frame, container) {
   drawMetricChart("t2-chart-hrv", dates, hrv, hrvSm, "#34c38f");
   drawMetricChart("t2-chart-rhr", dates, rhr, rhrSm, "#ef4444");
   drawMetricChart("t2-chart-walking", dates, walking, walkingSm, "#f0a020");
+  drawTriangleCombined("t2-combined", dates, hrv, rhr, walking);
 }
+// Big verdict panel — one-glance plain-language conclusion at the top of each
+// task. Designed for non-experts: no σ / z-score / p-value jargon in copy.
+function verdictPanel({ cls, emoji, headline, detail = "", action = "" }) {
+  return `
+    <div class="task-verdict ${cls}">
+      <div class="task-verdict-icon">${emoji}</div>
+      <div class="task-verdict-content">
+        <div class="task-verdict-headline">${headline}</div>
+        ${detail ? `<div class="task-verdict-detail">${detail}</div>` : ""}
+        ${action ? `<div class="task-verdict-action">${action}</div>` : ""}
+      </div>
+    </div>`;
+}
+
+// Plain-language phrasing for "today's value vs personal baseline" delta.
+// Avoids σ notation in main display — only the size of the deviation matters.
+function deltaPhrase(z, higherIsBetter) {
+  if (!Number.isFinite(z)) return { word: "資料不足", cls: "muted" };
+  const abs = Math.abs(z);
+  const isGood = higherIsBetter ? z > 0 : z < 0;
+  let mag;
+  if (abs < 0.5)      mag = "差不多";
+  else if (abs < 1)   mag = isGood ? "略好" : "略差";
+  else if (abs < 2)   mag = isGood ? "明顯比平常好" : "明顯比平常差";
+  else                mag = isGood ? "非常好" : "明顯偏離";
+  return { word: mag, cls: abs < 0.5 ? "muted" : isGood ? "good" : "bad" };
+}
+
 // Status from a Spearman / partial-corr r value.
 function corrStatus(r) {
   if (!Number.isFinite(r)) return { emoji: "⚪", label: "資料不足", cls: "empty" };
