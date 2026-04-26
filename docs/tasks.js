@@ -195,7 +195,8 @@ function tableHtml(headers, rows, opts = {}) {
   const body = rows.map((r) =>
     `<tr>${r.map((c, i) => `<td${opts.numCols && opts.numCols.includes(i) ? ' class="num"' : ""}>${c}</td>`).join("")}</tr>`,
   ).join("");
-  return `<table class="task-table"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  // Wrap in scroll-x so wide tables don't blow out the viewport on mobile.
+  return `<div class="scroll-x"><table class="task-table"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
 }
 
 function callout(severity, html) {
@@ -476,7 +477,7 @@ function corrMatrixHtml(labels, series) {
     }
     m.push(row);
   }
-  let html = '<table class="task-table"><thead><tr><th></th>';
+  let html = '<div class="scroll-x"><table class="task-table"><thead><tr><th></th>';
   for (const l of labels) html += `<th class="num">${l}</th>`;
   html += "</tr></thead><tbody>";
   for (let i = 0; i < n; i++) {
@@ -491,7 +492,7 @@ function corrMatrixHtml(labels, series) {
     }
     html += "</tr>";
   }
-  html += "</tbody></table>";
+  html += "</tbody></table></div>";
   return html;
 }
 
@@ -834,7 +835,7 @@ export function renderTask3(frame, container) {
   // lag-1 correlation matrix
   html += `<h3>📋 lag-1 Spearman 相關矩陣</h3>`;
   html += `<p class="muted">列：昨晚睡眠指標　·　欄：今天的恢復指標。藍 = 正相關，紅 = 負相關。星號 * 代表 p &lt; 0.05。</p>`;
-  let mtxHtml = `<table class="task-table"><thead><tr><th>　</th>`;
+  let mtxHtml = `<div class="scroll-x"><table class="task-table"><thead><tr><th>　</th>`;
   for (const [, label] of recoveryKeys) mtxHtml += `<th class="num">${label}</th>`;
   mtxHtml += `</tr></thead><tbody>`;
   for (const [_, sLabel, sArr] of sleepKeys) {
@@ -849,7 +850,7 @@ export function renderTask3(frame, container) {
     }
     mtxHtml += `</tr>`;
   }
-  mtxHtml += `</tbody></table>`;
+  mtxHtml += `</tbody></table></div>`;
   html += mtxHtml;
 
   // Sleep score binning boxplot
@@ -1402,6 +1403,7 @@ export function renderTask6(frame, container) {
   const today = readiness[todayIdx];
   const todayDate = frame.rows[todayIdx].date;
   const todayClass = readinessClassFromValue(today.spec);
+  const todayComponentCount = Object.keys(today.components).length;
 
   // Recent 7-day mean / prior 21-day mean (using spec weights)
   const specSeries = readiness.map((r) => r.spec);
@@ -1460,6 +1462,13 @@ export function renderTask6(frame, container) {
       ${Number.isFinite(trend) ? `趨勢：<span style="color:${trend > 0 ? "var(--good)" : trend < 0 ? "var(--bad)" : "var(--muted)"}"><strong>${trend >= 0 ? "+" : ""}${trend.toFixed(1)}</strong></span>` : ""}
     </div>
   </div>`;
+
+  // Warn if too few components — 1-2 components means the score is largely
+  // driven by a single dimension and won't be representative of overall recovery.
+  if (todayComponentCount < 3) {
+    html += callout("warn",
+      `<strong>⚠ 今日只有 ${todayComponentCount} 個組成成分有資料</strong>　（共 5 個：HRV / 靜息心率 / 睡眠分數 / 呼吸頻率 / 手腕體溫）。分數有算出來但只反映目前能讀到的訊號，不是完整 recovery 圖像。建議 Apple Watch 持續配戴 + 確認睡眠排程開啟。`);
+  }
 
   // Today's interpretation paragraph
   if (driver) {
