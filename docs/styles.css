@@ -156,6 +156,43 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .empty-state { text-align: center; color: var(--muted); padding: 40px 20px; }
 
+/* ---- Task panes ---- */
+.task-pane { padding: 4px 2px 12px; }
+.task-title { margin: 4px 0 6px 0; font-size: 1.15rem; font-weight: 600; }
+.task-intro { color: var(--muted); font-size: 0.9rem; margin: 0 0 16px 0; }
+.task-pending { font-style: italic; }
+.task-pane h3 { margin: 18px 0 8px 0; font-size: 0.98rem; font-weight: 600; }
+.task-callout {
+  padding: 10px 14px; margin: 6px 0 16px 0; border-radius: 6px;
+  border-left: 3px solid var(--info); background: rgba(255,255,255,0.03);
+  font-size: 0.92rem; line-height: 1.5;
+}
+.task-callout.good { border-left-color: var(--good); background: rgba(52,195,143,0.05); }
+.task-callout.warn { border-left-color: var(--warn); background: rgba(240,160,32,0.05); }
+.task-callout.alert { border-left-color: var(--bad); background: rgba(239,68,68,0.05); }
+.task-callout.info { border-left-color: var(--info); }
+.task-callout .muted { display: block; margin-top: 4px; font-size: 0.82rem; }
+.task-table {
+  width: 100%; border-collapse: collapse; font-size: 0.85rem;
+  margin: 4px 0 12px 0;
+}
+.task-table thead th {
+  position: sticky; top: 0; background: var(--panel);
+  border-bottom: 1px solid var(--border); padding: 6px 8px;
+  color: var(--muted); font-weight: 500; text-align: left;
+}
+.task-table th.num, .task-table td.num {
+  text-align: right; font-variant-numeric: tabular-nums;
+}
+.task-table tbody td {
+  padding: 5px 8px; border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.task-table tbody tr:hover { background: rgba(255,255,255,0.02); }
+.task-table code {
+  background: var(--panel-2); padding: 1px 5px; border-radius: 3px;
+  font-size: 0.78rem; color: var(--muted);
+}
+
 /* ---- Settings modal ---- */
 .icon-btn {
   background: transparent; border: 1px solid var(--border); color: var(--text);

@@ -63,84 +63,24 @@
   </div>
 
   <div class="card">
-    <div class="score-row" id="scoreBanner"></div>
-  </div>
-
-  <div class="card">
-    <div class="kpi-row" id="kpis"></div>
-  </div>
-
-  <div class="card">
     <div class="tabs">
-      <button class="tab active" data-tab="tab-insights">🤖 自動洞察</button>
-      <button class="tab" data-tab="tab-trend">📈 趨勢</button>
-      <button class="tab" data-tab="tab-corr">🔗 相關矩陣</button>
-      <button class="tab" data-tab="tab-lag">⏱ 延遲相關</button>
-      <button class="tab" data-tab="tab-anom">⚠ 異常天</button>
-      <button class="tab" data-tab="tab-data">🧾 每日資料</button>
-      <button class="tab" data-tab="tab-ai">🤖 AI 解讀</button>
+      <button class="tab active" data-tab="tab-task1">🩺 1 健檢</button>
+      <button class="tab" data-tab="tab-task2">🔋 2 三角</button>
+      <button class="tab" data-tab="tab-task3">💤 3 睡眠</button>
+      <button class="tab" data-tab="tab-task4">🚶 4 步態</button>
+      <button class="tab" data-tab="tab-task5">🌅 5 節律</button>
+      <button class="tab" data-tab="tab-task6">✅ 6 Readiness</button>
+      <button class="tab" data-tab="tab-task7">🤒 7 早警</button>
+      <button class="tab" data-tab="tab-ai">✨ AI 解讀</button>
     </div>
 
-    <div id="tab-insights" class="tab-content active">
-      <div id="insightsList"></div>
-    </div>
-
-    <div id="tab-trend" class="tab-content">
-      <div class="metric-picker" id="trendPicker"></div>
-      <div id="chart"></div>
-      <div class="muted">提示：原始點疊上滾動平均線。多指標同 y 軸，看趨勢方向；想看單位差異大的指標關聯，請看「相關矩陣」分頁。</div>
-    </div>
-
-    <div id="tab-corr" class="tab-content">
-      <div class="muted" style="margin-bottom:8px">Spearman 相關（順序統計，對非線性與離群值穩健）；藍 = 正相關，紅 = 負相關。</div>
-      <div id="heatmap"></div>
-    </div>
-
-    <div id="tab-lag" class="tab-content">
-      <h3 style="margin:4px 0 6px 0; font-size:0.95rem;">驅動因子（行為類）</h3>
-      <div class="metric-picker" id="driversPicker"></div>
-      <h3 style="margin:10px 0 6px 0; font-size:0.95rem;">反應因子（身體狀態）</h3>
-      <div class="metric-picker" id="responsesPicker"></div>
-      <div class="row" style="display:flex; gap:8px; margin-bottom:10px;">
-        <div><label class="muted">lag 起點</label> <input type="number" id="lagFrom" value="-1" style="width:80px;background:var(--panel-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px"></div>
-        <div><label class="muted">lag 終點</label> <input type="number" id="lagTo" value="2" style="width:80px;background:var(--panel-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px"></div>
-      </div>
-      <div class="scroll-x">
-        <table id="lagTable">
-          <thead><tr>
-            <th>驅動</th><th>反應</th><th class="num">延遲 (天)</th>
-            <th class="num">相關 r</th><th class="num">p</th><th class="num">天數</th>
-          </tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <div class="muted" style="margin-top:8px">
-        延遲為正 = 反應在驅動之後 N 天測得。例：sleep_hours → resting_hr (lag = 1) 代表「今晚睡眠時數 vs 隔天靜息心跳」。
-      </div>
-    </div>
-
-    <div id="tab-anom" class="tab-content">
-      <h3 id="anomTitle" style="margin:0 0 10px 0; font-size:1rem;"></h3>
-      <div class="scroll-x">
-        <table id="anomTable">
-          <thead><tr>
-            <th>日期</th><th>指標</th><th class="num">當日值</th>
-            <th class="num">基準均值</th><th class="num">Z 分數</th>
-          </tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </div>
-
-    <div id="tab-data" class="tab-content">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-        <span class="muted" id="dailyHint"></span>
-        <button class="primary" id="downloadCsv">下載完整 CSV</button>
-      </div>
-      <div class="scroll-x" style="max-height:540px; overflow:auto;">
-        <table id="dailyTable"><thead></thead><tbody></tbody></table>
-      </div>
-    </div>
+    <div id="tab-task1" class="tab-content active task-pane"></div>
+    <div id="tab-task2" class="tab-content task-pane"></div>
+    <div id="tab-task3" class="tab-content task-pane"></div>
+    <div id="tab-task4" class="tab-content task-pane"></div>
+    <div id="tab-task5" class="tab-content task-pane"></div>
+    <div id="tab-task6" class="tab-content task-pane"></div>
+    <div id="tab-task7" class="tab-content task-pane"></div>
 
     <div id="tab-ai" class="tab-content">
       <div id="aiStatus" class="ai-status"></div>
