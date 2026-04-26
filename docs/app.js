@@ -24,6 +24,34 @@ const state = {
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
+// Crude iOS detection — covers iPad on iPadOS 13+ which fakes Macintosh UA.
+function isIOS() {
+  const ua = navigator.userAgent || "";
+  if (/iPhone|iPad|iPod/.test(ua)) return true;
+  // iPadOS 13+: identifies as Mac with touch support
+  return navigator.maxTouchPoints > 1 && /Macintosh/.test(ua);
+}
+
+// Show pre-upload warnings: a permanent iOS-memory advisory on iPhone/iPad,
+// plus a one-shot "looks like the last attempt got killed mid-parse" message
+// when sessionStorage shows a parse started but never finished.
+function setupUploadWarnings() {
+  if (isIOS()) {
+    const w = $("#iosWarn");
+    if (w) w.style.display = "block";
+  }
+  // sessionStorage is cleared on tab close but persists across tab reloads
+  // — exactly the signal we need to detect "the OS killed this tab during
+  // upload and reloaded it from scratch".
+  try {
+    if (sessionStorage.getItem("autohealth.parseInProgress") === "1") {
+      const w = $("#reloadWarn");
+      if (w) w.style.display = "block";
+      sessionStorage.removeItem("autohealth.parseInProgress");
+    }
+  } catch {}
+}
+
 // ---------------- file handling ------------------------------------------
 
 function setupDropzone() {
@@ -46,11 +74,22 @@ async function loadFile(file) {
   const textEl = $("#progressText");
   $("#progressWrap").style.display = "block";
   textEl.textContent = "讀取中…";
+  // Mark sessionStorage so we can detect "tab got killed during parse" on
+  // the next page load (mostly an iOS Safari memory-limit symptom).
+  try { sessionStorage.setItem("autohealth.parseInProgress", "1"); } catch {}
+  // Big-file warning specifically for iOS where memory limits are tightest.
+  if (isIOS() && file.size > 100 * 1024 * 1024) {
+    const sizeMb = (file.size / 1024 / 1024).toFixed(0);
+    textEl.textContent = `讀取 ${sizeMb} MB 中… iPhone 記憶體緊，可能會失敗，建議改用桌機。`;
+  }
   try {
     const parsed = await parseExport(file, ({ message, progress }) => {
       textEl.textContent = message;
       if (progress != null) progressEl.style.width = `${Math.min(100, progress * 100)}%`;
     });
+    // Parse succeeded — clear the mid-parse marker so reload-detection
+    // doesn't show a false alarm next page load.
+    try { sessionStorage.removeItem("autohealth.parseInProgress"); } catch {}
     state.parsed = parsed;
     state.frame = buildDailyFrame(parsed);
     if (!state.frame.rows.length) {
@@ -72,6 +111,8 @@ async function loadFile(file) {
     initDashboard();
   } catch (err) {
     console.error(err);
+    // Caught error means we made it back here — not an OS kill. Clear marker.
+    try { sessionStorage.removeItem("autohealth.parseInProgress"); } catch {}
     textEl.textContent = `失敗：${err.message}`;
   }
 }
@@ -650,3 +691,4 @@ function setupAiTab() {
 
 setupDropzone();
 setupSettingsModal();
+setupUploadWarnings();

@@ -25,6 +25,22 @@
 <!-- Upload -->
 <div id="uploadCard" class="card">
   <h2>1. 上傳 Apple Health 匯出檔</h2>
+  <div id="iosWarn" class="ios-warn" style="display:none;">
+    <strong>📱 偵測到你正在用 iPhone / iPad</strong><br>
+    Apple Health 的 export.zip 解壓後常常超過 500MB，iOS Safari
+    記憶體限制較嚴格（約 250-500MB），<strong>大檔可能上傳到一半被系統重載
+    （表現：點上傳後閃一下回到這個頁面）</strong>。
+    <br><br>
+    建議做法：
+    <ol style="margin:6px 0 0 18px; padding:0;">
+      <li>把 <code>匯出.zip</code> 存到 iCloud 雲碟 / Google Drive</li>
+      <li>用桌機 Safari / Chrome 開這個網頁，從雲端下載後再上傳</li>
+    </ol>
+  </div>
+  <div id="reloadWarn" class="ios-warn" style="display:none; border-left-color: var(--bad); background: rgba(239,68,68,0.06);">
+    <strong>⚠ 偵測到剛才上傳被中斷</strong><br>
+    可能是檔案太大、瀏覽器記憶體不足把分頁重載。建議用桌機重試。
+  </div>
   <div id="dropzone" class="dropzone">
     <div>📂 拖曳 <strong>匯出.zip</strong> 或 <strong>export.xml</strong> 到這裡</div>
     <div class="hint">或點此選擇檔案。所有處理都在本地，不會上傳。</div>
