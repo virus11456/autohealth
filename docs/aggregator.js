@@ -186,3 +186,80 @@ export function rollingMean(values, window) {
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Intraday structures used by the scoring engine (stress timeline, Body
+// Battery simulation). Everything is keyed by local calendar day and hour so
+// it serialises to plain JSON for persistence.
+// ---------------------------------------------------------------------------
+
+function emptyHourly() {
+  const nan = () => new Array(24).fill(NaN);
+  return { hr: nan(), hrMin: nan(), hrv: nan(), steps: nan(), energy: nan(), _hrN: new Array(24).fill(0), _hrvN: new Array(24).fill(0) };
+}
+
+// Per-day, per-hour buckets: mean heart rate, min heart rate, mean HRV, step
+// and energy sums. Returns a plain object { "YYYY-MM-DD": {...} }.
+export function buildHourlyFrame(parsed) {
+  const byDate = {};
+  const get = (d) => {
+    const k = dateKey(d);
+    let h = byDate[k];
+    if (!h) { h = emptyHourly(); byDate[k] = h; }
+    return h;
+  };
+  const q = parsed.quantities || {};
+  for (const r of q.hr || []) {
+    const h = get(r.start), i = r.start.getHours();
+    h.hr[i] = (Number.isFinite(h.hr[i]) ? h.hr[i] * h._hrN[i] : 0) + r.value;
+    h._hrN[i]++;
+    h.hr[i] /= h._hrN[i];
+    h.hrMin[i] = Number.isFinite(h.hrMin[i]) ? Math.min(h.hrMin[i], r.value) : r.value;
+  }
+  for (const r of q.hrv || []) {
+    const h = get(r.start), i = r.start.getHours();
+    h.hrv[i] = (Number.isFinite(h.hrv[i]) ? h.hrv[i] * h._hrvN[i] : 0) + r.value;
+    h._hrvN[i]++;
+    h.hrv[i] /= h._hrvN[i];
+  }
+  for (const r of q.steps || []) {
+    const h = get(r.start), i = r.start.getHours();
+    h.steps[i] = (Number.isFinite(h.steps[i]) ? h.steps[i] : 0) + r.value;
+  }
+  for (const r of q.active_energy || []) {
+    const h = get(r.start), i = r.start.getHours();
+    h.energy[i] = (Number.isFinite(h.energy[i]) ? h.energy[i] : 0) + r.value;
+  }
+  for (const k of Object.keys(byDate)) { delete byDate[k]._hrN; delete byDate[k]._hrvN; }
+  return byDate;
+}
+
+// Asleep intervals as [startMs, endMs] pairs, attributed to the end-day like
+// the daily frame. When a night has stage records (Apple Watch) we use those;
+// otherwise we fall back to InBed records (iPhone-only users).
+export function buildSleepIntervals(sleep) {
+  const byDate = {};
+  for (const s of sleep || []) {
+    const k = dateKey(s.end);
+    let d = byDate[k];
+    if (!d) { d = { asleep: [], inBed: [] }; byDate[k] = d; }
+    const iv = [s.start.getTime(), s.end.getTime()];
+    if (ASLEEP_STAGES.has(s.stage)) d.asleep.push(iv);
+    else if (IN_BED_STAGES.has(s.stage)) d.inBed.push(iv);
+  }
+  const out = {};
+  for (const [k, d] of Object.entries(byDate)) {
+    const list = d.asleep.length ? d.asleep : d.inBed;
+    list.sort((a, b) => a[0] - b[0]);
+    out[k] = list;
+  }
+  return out;
+}
+
+// Workouts as plain JSON (ms timestamps).
+export function buildWorkouts(workouts) {
+  return (workouts || []).map((w) => ({
+    start: w.start.getTime(), end: w.end.getTime(),
+    durationMin: w.durationMin, type: w.type, energy: w.energy, date: dateKey(w.start),
+  }));
+}

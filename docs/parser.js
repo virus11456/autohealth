@@ -55,6 +55,9 @@ function parseAttrs(s) {
 // Match a single self-closing <Record .../> tag. Apple Health writes one per
 // line in practice; if not, we still match across whitespace.
 const RECORD_RE = /<Record\b([^>]*?)\/>/g;
+// <Workout ...> opens an element with children (events, statistics); we only
+// need its attributes, so match the opening tag.
+const WORKOUT_RE = /<Workout\b([^>]*?)>/g;
 
 async function* streamLines(stream) {
   // Yields strings broken at newlines; preserves trailing partial buffer.
@@ -192,6 +195,7 @@ export async function parseExport(file, onProgress) {
   const out = {
     quantities: Object.fromEntries(SUPPORTED.map((m) => [m.key, []])),
     sleep: [],
+    workouts: [],
   };
 
   const { stream, totalBytes } = await getXmlStream(file, onProgress);
@@ -212,6 +216,33 @@ export async function parseExport(file, onProgress) {
         message: `解析中… ${recordCount.toLocaleString()} 筆紀錄`,
         progress: totalBytes ? bytesSeen / totalBytes : null,
       });
+    }
+    if (line.indexOf("<Workout") !== -1) {
+      WORKOUT_RE.lastIndex = 0;
+      let w;
+      while ((w = WORKOUT_RE.exec(line)) !== null) {
+        const attrs = parseAttrs(w[1]);
+        const start = parseAppleDate(attrs.startDate);
+        const end = parseAppleDate(attrs.endDate);
+        if (!start || !end || end <= start) continue;
+        let durationMin = parseFloat(attrs.duration);
+        const du = (attrs.durationUnit || "min").toLowerCase();
+        if (Number.isFinite(durationMin)) {
+          if (du === "s" || du === "sec") durationMin /= 60;
+          else if (du === "hr" || du === "h") durationMin *= 60;
+        } else {
+          durationMin = (end - start) / 60000;
+        }
+        const energy = parseFloat(attrs.totalEnergyBurned);
+        out.workouts.push({
+          start, end, durationMin,
+          type: (attrs.workoutActivityType || "").replace("HKWorkoutActivityType", "") || "Other",
+          energy: Number.isFinite(energy) ? energy : null,
+          source: attrs.sourceName || "",
+        });
+        recordCount++;
+      }
+      continue;
     }
     // Quick pre-filter to skip lines without <Record
     if (line.indexOf("<Record") === -1) continue;
@@ -256,5 +287,6 @@ export async function parseExport(file, onProgress) {
     else out.quantities[k].sort((a, b) => a.start - b.start);
   }
   out.sleep.sort((a, b) => a.start - b.start);
+  out.workouts.sort((a, b) => a.start - b.start);
   return out;
 }
