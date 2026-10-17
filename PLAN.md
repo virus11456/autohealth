@@ -1,7 +1,7 @@
 # AutoHealth → 「WellDo 式」壓力 / HRV 監測 App 企劃
 
 > 目的：決定要用哪種形式做出能**直接讀取健康數據、在手機上持續監測**的 app（參考 WellDo），而不是靠手動匯出 Apple Health 檔案。
-> **決定：走方案 A（原生 iOS + watchOS）。** 第一輪 iPhone MVP 已在 `ios/` 實作，建置方式見 `ios/README.md`。以下保留當初的方案比較。
+> **決定：走方案 A（原生 iOS + watchOS）。** 第一輪 iPhone MVP 已實作於 repo 根目錄，建置方式見 `README.md`；舊的匯出檔網頁版與 Streamlit 版已刪除。以下保留當初的方案比較。
 
 ---
 
@@ -29,7 +29,7 @@
 
 ### 方案 A：原生 iOS + watchOS App（SwiftUI + HealthKit）— 最接近 WellDo ★推薦（有 Mac 的話）
 
-**做法**：在 repo 新增 `ios/` 目錄，Xcode 專案含三個 target：
+**做法**：Xcode 專案含三個 target：
 - `AutoHealth`（iPhone 主 app）
 - `AutoHealthWatch`（Watch app：即時量測、錶面複雜功能）
 - `AutoHealthWidgets`（iPhone 桌面 widget）

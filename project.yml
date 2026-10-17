@@ -1,5 +1,5 @@
 # XcodeGen spec — run `xcodegen generate` in this folder to produce
-# AutoHealth.xcodeproj (see ios/README.md).
+# AutoHealth.xcodeproj (see README.md).
 name: AutoHealth
 options:
   bundleIdPrefix: com.autohealth
