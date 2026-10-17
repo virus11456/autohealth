@@ -1,4 +1,18 @@
-# AutoHealth — Apple Health 跨維度分析儀表板
+# AutoHealth — HRV 壓力監測 App + Apple Health 分析儀表板
+
+兩個部分：
+
+- **`ios/` — 原生 iPhone App（新）**：直接讀「健康」(HealthKit)，在手機上算壓力分數、
+  即時壓力、Body Battery、睡眠分數、恢復分數，背景監測並發本機通知。不需匯出、不需伺服器。
+  建置方式見 [`ios/README.md`](ios/README.md)。
+- **`docs/` 與 `app.py` — 匯出檔分析儀表板（原有）**：把 Apple Health 匯出的 zip 解析成
+  趨勢、相關矩陣、異常偵測。`docs/scoring.js` 等模組與 iOS 版共用同一套評分演算法。
+
+方案比較與決策紀錄見 [`PLAN.md`](PLAN.md)。
+
+---
+
+## 匯出檔分析儀表板
 
 把 Apple Health 匯出的「太基礎」數據（睡眠、血氧、心跳、步數、HRV…）自動化成
 可看趨勢、跨維度對照、找異常的儀表板。

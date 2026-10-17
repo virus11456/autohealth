@@ -106,11 +106,11 @@ export function sleepScoreFor(row, bedtimeBaseline) {
   if (!Number.isFinite(hours) || hours <= 0) return { score: NaN, parts: [] };
 
   const dur = piecewise(hours, [[2, 5], [4, 20], [5, 45], [6, 70], [7, 90], [7.5, 100], [9.5, 100], [10.5, 85], [12, 70]]);
-  parts.push({ key: "duration", label: "睡眠時數", score: dur, weight: 0.45, text: `${hours.toFixed(1)} 小時` });
+  parts.push({ key: "duration", label: "睡眠時數", score: dur, weight: 0.55, text: `${hours.toFixed(1)} 小時` });
 
   if (Number.isFinite(row.sleep_efficiency)) {
     const eff = clamp((row.sleep_efficiency - 0.75) / 0.2, 0, 1) * 100;
-    parts.push({ key: "efficiency", label: "睡眠效率", score: eff, weight: 0.2, text: `${(row.sleep_efficiency * 100).toFixed(0)}%` });
+    parts.push({ key: "efficiency", label: "睡眠效率", score: eff, weight: 0.15, text: `${(row.sleep_efficiency * 100).toFixed(0)}%` });
   }
 
   const totalMin = hours * 60;
@@ -120,7 +120,7 @@ export function sleepScoreFor(row, bedtimeBaseline) {
     const remPct = row.sleep_rem_minutes / totalMin;
     const deep = piecewise(deepPct, [[0.03, 20], [0.08, 60], [0.13, 100], [0.25, 100], [0.35, 70]]);
     const rem = piecewise(remPct, [[0.05, 20], [0.12, 60], [0.18, 100], [0.30, 100], [0.40, 70]]);
-    parts.push({ key: "stages", label: "深睡 / REM", score: (deep + rem) / 2, weight: 0.2,
+    parts.push({ key: "stages", label: "深睡 / REM", score: (deep + rem) / 2, weight: 0.15,
       text: `深睡 ${(deepPct * 100).toFixed(0)}% · REM ${(remPct * 100).toFixed(0)}%` });
   }
 
@@ -132,7 +132,9 @@ export function sleepScoreFor(row, bedtimeBaseline) {
   }
 
   const wsum = parts.reduce((s, p) => s + p.weight, 0);
-  const score = parts.reduce((s, p) => s + p.score * p.weight, 0) / wsum;
+  let score = parts.reduce((s, p) => s + p.score * p.weight, 0) / wsum;
+  // A short night can never be "good" no matter how efficient it was.
+  score = Math.min(score, dur + 20);
   return { score: clamp(score, 0, 100), parts };
 }
 
